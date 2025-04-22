@@ -1,0 +1,11 @@
+Description: Add python3 shebang to avoid lintian warning
+Author: Daniel Echeverri <epsilon@debian.org>
+Forwarded: not-needed
+Last-Update: 2024-10-12
+--- a/glances/exports/glances_mqtt/__init__.py
++++ b/glances/exports/glances_mqtt/__init__.py
+@@ -1,3 +1,4 @@
++#!/usr/bin/python3
+ #
+ # This file is part of Glances.
+ #

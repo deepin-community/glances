@@ -1,0 +1,15 @@
+Description: Remove scripts with external HTML resources to fix lintian warning
+Author: Daniel Echeverry <epsilon77@gmail.com>
+Forwarded: not-needed
+Last-Update: 2016-03-16
+--- a/docs/conf.py
++++ b/docs/conf.py
+@@ -163,7 +163,7 @@
+ # html_use_smartypants = True
+ 
+ # Custom sidebar templates, maps document names to template names.
+-html_sidebars = {'**': ['about.html', 'navigation.html', 'links.html', 'searchbox.html']}
++html_sidebars = {'**': ['navigation.html', 'links.html', 'searchbox.html']}
+ 
+ # Additional templates that should be rendered to pages, maps page names to
+ # template names.

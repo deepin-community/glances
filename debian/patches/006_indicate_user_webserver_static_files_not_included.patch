@@ -1,0 +1,20 @@
+Description: Add info in --help that the webserver feature doesn't include static files
+Author: Alexis Murzeau <amubtdx@gmail.com>
+Bug-Debian: https://bugs.debian.org/990340
+Forwarded: not-needed
+Last-Update: 2025-01-07
+---
+ glances/main.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/glances/main.py
++++ b/glances/main.py
+@@ -442,7 +442,7 @@
+             action='store_true',
+             default=False,
+             dest='webserver',
+-            help='run Glances in web server mode (FastAPI, Uvicorn, Jinja2 libs needed)',
++            help='run Glances in web server mode (python-fastapi, python3-uvicorn, python3-jinja2 libs needed, static files not included)',
+         )
+         parser.add_argument(
+             '--cached-time',

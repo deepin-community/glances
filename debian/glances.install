@@ -1,0 +1,2 @@
+conf/glances.conf etc/glances/
+glances/outputs/static/images/glances.png /usr/share/glances/

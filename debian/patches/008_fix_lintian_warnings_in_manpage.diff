@@ -1,0 +1,64 @@
+Description: Fix lintian warnings in manpage.
+Author: Daniel Echeverri <epsilon@debian.org>
+Forwarded: not-needed
+Last-Update: 2025-01-07
+--- a/docs/man/glances.1
++++ b/docs/man/glances.1
+@@ -561,39 +561,24 @@
+ You can place your \fBglances.conf\fP file in the following locations:
+ .TS
+ box center;
+-l|l.
+-T{
+-\fBLinux\fP, \fBSunOS\fP
+-T}	T{
+-~/.config/glances/, /etc/glances/, /usr/share/doc/glances/
+-T}
+-_
+-T{
+-\fB*BSD\fP
+-T}	T{
+-~/.config/glances/, /usr/local/etc/glances/, /usr/share/doc/glances/
+-T}
+-_
+-T{
+-\fBmacOS\fP
+-T}	T{
+-~/.config/glances/, ~/Library/Application Support/glances/, /usr/local/etc/glances/, /usr/share/doc/glances/
+-T}
+-_
+-T{
+-\fBWindows\fP
+-T}	T{
+-%APPDATA%\eglances\eglances.conf
+-T}
+-_
+-T{
+-\fBAll\fP
+-T}	T{
+-.INDENT 0.0
+-.IP \(bu 2
+-<venv_root_folder>/share/doc/glances/
+-.UNINDENT
+-T}
++l l.
++\fBLinux\fP, \fBSunOS\fP:
++    ~/.config/glances/,
++    /etc/glances/,
++    /usr/share/docs/glances/
++\fB*BSD\fP:
++    ~/.config/glances/,
++    /usr/local/etc/glances/,
++    /usr/share/docs/glances/
++\fBmacOS\fP:
++    ~/.config/glances/,
++    ~/Library/Application Support/glances/,
++    /usr/local/etc/glances/,
++    /usr/share/docs/glances/
++\fBWindows\fP:
++    %APPDATA%\\eglances\\eglances.conf
++\fBAll\fP:
++    <venv_root_folder>/share/doc/glances/
+ .TE
+ .INDENT 0.0
+ .IP \(bu 2

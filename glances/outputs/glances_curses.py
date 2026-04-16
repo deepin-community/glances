@@ -8,11 +8,12 @@
 
 """Curses interface class."""
 
+import functools
 import getpass
 import sys
 
 from glances.events_list import glances_events
-from glances.globals import MACOS, WINDOWS, disable, enable, itervalues, nativestr, u
+from glances.globals import MACOS, WINDOWS, disable, enable, nativestr, u
 from glances.logger import logger
 from glances.outputs.glances_colors import GlancesColors
 from glances.outputs.glances_unicode import unicode_message
@@ -46,11 +47,12 @@ class _GlancesCurses:
         '4': {'handler': '_handle_quicklook'},
         '5': {'handler': '_handle_top_menu'},
         '6': {'switch': 'meangpu'},
+        '7': {'switch': 'disable_npu'},
         '/': {'switch': 'process_short_name'},
         'a': {'sort_key': 'auto'},
         'A': {'switch': 'disable_amps'},
         'b': {'switch': 'byte'},
-        'B': {'switch': 'diskio_iops'},
+        'B': {'handler': '_handle_diskio_iops'},
         'c': {'sort_key': 'cpu_percent'},
         'C': {'switch': 'disable_cloud'},
         'd': {'switch': 'disable_diskio'},
@@ -68,10 +70,12 @@ class _GlancesCurses:
         # 'k' > Kill selected process
         'K': {'switch': 'disable_connections'},
         'l': {'switch': 'disable_alert'},
+        'L': {'handler': '_handle_diskio_latency'},
         'm': {'sort_key': 'memory_percent'},
         'M': {'switch': 'reset_minmax_tag'},
         'n': {'switch': 'disable_network'},
         'N': {'switch': 'disable_now'},
+        'o': {'sort_key': 'cpu_num'},
         'p': {'sort_key': 'name'},
         'P': {'switch': 'disable_ports'},
         # 'q' or ESCAPE > Quit
@@ -91,8 +95,10 @@ class _GlancesCurses:
         'z': {'handler': '_handle_disable_process'},
         '+': {'handler': '_handle_increase_nice'},
         '-': {'handler': '_handle_decrease_nice'},
-        # "<" (left arrow) navigation through process sort
-        # ">" (right arrow) navigation through process sort
+        # "<" (shift + left arrow) navigation through process sort
+        # ">" (shift + right arrow) navigation through process sort
+        # "<" (left arrow) scroll through process name
+        # ">" (right arrow) scroll through process name
         # 'UP' > Up in the server list
         # 'DOWN' > Down in the server list
     }
@@ -100,13 +106,13 @@ class _GlancesCurses:
     _sort_loop = sort_processes_stats_list
 
     # Define top menu
-    _top = ['quicklook', 'cpu', 'percpu', 'gpu', 'mem', 'memswap', 'load']
+    _top = ['quicklook', 'cpu', 'percpu', 'npu', 'gpu', 'mem', 'memswap', 'load']
     _quicklook_max_width = 58
 
     # Define left sidebar
     # This variable is used in the make webui task in order to generate the
     # glances/outputs/static/js/uiconfig.json file for the web interface
-    # This lidt can also be overwritten by the configuration file ([outputs] left_menu option)
+    # This list can also be overwritten by the configuration file ([outputs] left_menu option)
     _left_sidebar = [
         'network',
         'ports',
@@ -160,8 +166,8 @@ class _GlancesCurses:
         # Load configuration file
         self.load_config(config)
 
-        # Init cursor
-        self._init_cursor()
+        # Init Curses cursor
+        self._init_curses_cursor()
 
         # Init the colors
         self.colors_list = GlancesColors(args).get()
@@ -182,13 +188,20 @@ class _GlancesCurses:
         # Init the process min/max reset
         self.args.reset_minmax_tag = False
 
-        # Init cursor
+        # Init Glances cursor
         self.args.cursor_position = 0
+        self.args.cursor_process_name_position = 0
+
+        # For the moment cursor only available in standalone mode
+        self.args.disable_cursor = not self.args.is_standalone
 
         # Catch key pressed with non blocking mode
         self.term_window.keypad(1)
         self.term_window.nodelay(1)
         self.pressedkey = -1
+
+        # Is this the end ?
+        self.is_end = False
 
         # History tag
         self._init_history()
@@ -221,7 +234,7 @@ class _GlancesCurses:
 
         self.reset_history_tag = False
 
-    def _init_cursor(self):
+    def _init_curses_cursor(self):
         """Init cursors."""
 
         if hasattr(curses, 'noecho'):
@@ -244,7 +257,6 @@ class _GlancesCurses:
                 pass
 
     def get_key(self, window):
-        # TODO: Check issue #163
         return window.getch()
 
     def catch_actions_from_hotkey(self, hotkey):
@@ -257,22 +269,22 @@ class _GlancesCurses:
             action()
 
     def catch_other_actions_maybe_return_to_browser(self, return_to_browser):
-        if self.pressedkey == ord('e') and not self.args.programs:
-            self._handle_process_extended()
-        elif self.pressedkey == ord('k') and not self.args.disable_cursor:
-            self._handle_kill_process()
-        elif self.pressedkey == curses.KEY_LEFT:
-            self._handle_sort_left()
-        elif self.pressedkey == curses.KEY_RIGHT:
-            self._handle_sort_right()
-        elif self.pressedkey == curses.KEY_UP or self.pressedkey == 65 and not self.args.disable_cursor:
-            self._handle_cursor_up()
-        elif self.pressedkey == curses.KEY_DOWN or self.pressedkey == 66 and not self.args.disable_cursor:
-            self._handle_cursor_down()
-        elif self.pressedkey == ord('\x1b') or self.pressedkey == ord('q'):
-            self._handle_quit(return_to_browser)
-        elif self.pressedkey == curses.KEY_F5 or self.pressedkey == 18:
-            self._handle_refresh()
+        {
+            self.pressedkey in {ord('e')} and not self.args.programs: self._handle_process_extended,
+            self.pressedkey in {ord('k')} and not self.args.disable_cursor: self._handle_kill_process,
+            self.pressedkey
+            in {curses.KEY_LEFT if self.args.arrow_keys_sort else curses.KEY_SLEFT}: self._handle_sort_left,
+            self.pressedkey
+            in {curses.KEY_RIGHT if self.args.arrow_keys_sort else curses.KEY_SRIGHT}: self._handle_sort_right,
+            self.pressedkey
+            in {curses.KEY_SLEFT if self.args.arrow_keys_sort else curses.KEY_LEFT}: self._handle_process_name_left,
+            self.pressedkey
+            in {curses.KEY_SRIGHT if self.args.arrow_keys_sort else curses.KEY_RIGHT}: self._handle_process_name_right,
+            self.pressedkey in {curses.KEY_UP, 65} and not self.args.disable_cursor: self._handle_cursor_up,
+            self.pressedkey in {curses.KEY_DOWN, 66} and not self.args.disable_cursor: self._handle_cursor_down,
+            self.pressedkey in {curses.KEY_F5, 18}: self._handle_refresh,
+            self.pressedkey in {ord('\x1b'), ord('q')}: functools.partial(self._handle_quit, return_to_browser),
+        }.get(True, lambda: None)()
 
     def __catch_key(self, return_to_browser=False):
         # Catch the pressed key
@@ -353,6 +365,13 @@ class _GlancesCurses:
     def _handle_kill_process(self):
         self.kill_process = not self.kill_process
 
+    def _handle_process_name_left(self):
+        if self.args.cursor_process_name_position > 0:
+            self.args.cursor_process_name_position -= 1
+
+    def _handle_process_name_right(self):
+        self.args.cursor_process_name_position += 1
+
     def _handle_clean_logs(self):
         glances_events.clean()
 
@@ -365,6 +384,18 @@ class _GlancesCurses:
             glances_processes.disable()
         else:
             glances_processes.enable()
+
+    def _handle_diskio_iops(self):
+        """Switch between bytes/s and IOPS for Disk IO."""
+        self.args.diskio_iops = not self.args.diskio_iops
+        if self.args.diskio_iops:
+            self.args.diskio_latency = False
+
+    def _handle_diskio_latency(self):
+        """Switch between bytes/s and latency for Disk IO."""
+        self.args.diskio_latency = not self.args.diskio_latency
+        if self.args.diskio_latency:
+            self.args.diskio_iops = False
 
     def _handle_sort_left(self):
         next_sort = (self.loop_position() - 1) % len(self._sort_loop)
@@ -387,6 +418,10 @@ class _GlancesCurses:
             logger.info("Stop Glances client and return to the browser")
         else:
             logger.info(f"Stop Glances (keypressed: {self.pressedkey})")
+            # End the curses window
+            self.end()
+            # Exit the program
+            sys.exit(0)
 
     def _handle_refresh(self):
         glances_processes.reset_internal_cache()
@@ -400,23 +435,23 @@ class _GlancesCurses:
 
     def disable_top(self):
         """Disable the top panel"""
-        for p in ['quicklook', 'cpu', 'gpu', 'mem', 'memswap', 'load']:
+        for p in self._top:
             setattr(self.args, 'disable_' + p, True)
 
     def enable_top(self):
         """Enable the top panel"""
-        for p in ['quicklook', 'cpu', 'gpu', 'mem', 'memswap', 'load']:
+        for p in self._top:
             setattr(self.args, 'disable_' + p, False)
 
     def disable_fullquicklook(self):
         """Disable the full quicklook mode"""
-        for p in ['quicklook', 'cpu', 'gpu', 'mem', 'memswap']:
+        for p in ['quicklook', 'cpu', 'npu', 'gpu', 'mem', 'memswap']:
             setattr(self.args, 'disable_' + p, False)
 
     def enable_fullquicklook(self):
         """Disable the full quicklook mode"""
         self.args.disable_quicklook = False
-        for p in ['cpu', 'gpu', 'mem', 'memswap']:
+        for p in ['cpu', 'npu', 'gpu', 'mem', 'memswap']:
             setattr(self.args, 'disable_' + p, True)
 
     def end(self):
@@ -433,6 +468,7 @@ class _GlancesCurses:
             curses.endwin()
         except Exception:
             pass
+        self.is_end = True
 
     def init_line_column(self):
         """Init the line and column position for the curses interface."""
@@ -549,16 +585,16 @@ class _GlancesCurses:
         self.__display_header(__stat_display)
         self.separator_line()
 
-        # ==============================================================
-        # Display second line (<SUMMARY>+CPU|PERCPU+<GPU>+LOAD+MEM+SWAP)
-        # ==============================================================
+        # ====================================================================
+        # Display second line (<SUMMARY>+CPU|PERCPU+<NPU>+<GPU>+LOAD+MEM+SWAP)
+        # ====================================================================
         self.__display_top(__stat_display, stats)
         self.init_column()
         self.separator_line()
 
-        # ==================================================================
+        # ===================================================================
         # Display left sidebar (NETWORK+PORTS+DISKIO+FS+SENSORS+Current time)
-        # ==================================================================
+        # ===================================================================
         self.__display_left(__stat_display)
 
         # ====================================
@@ -661,12 +697,20 @@ class _GlancesCurses:
         """
         # First line
         self.new_line()
-        self.space_between_column = 0
         l_uptime = 1
         for i in ['system', 'ip', 'uptime']:
             if i in stat_display:
                 l_uptime += self.get_stats_display_width(stat_display[i])
-        self.display_plugin(stat_display["system"], display_optional=(self.term_window.getmaxyx()[1] >= l_uptime))
+
+        display_system_optional = self.term_window.getmaxyx()[1] >= l_uptime
+
+        # Calculate the initial `space_between_column` based on displayed system messages
+        msgs = stat_display["system"]["msgdict"]
+        visible_msgs = [msg for msg in msgs if display_system_optional or not msg["optional"]]
+        ends_with_space = bool(visible_msgs) and visible_msgs[-1]["msg"].endswith(" ")
+        self.space_between_column = 0 if ends_with_space else 1
+
+        self.display_plugin(stat_display["system"], display_optional=display_system_optional)
         self.space_between_column = 3
         if 'ip' in stat_display:
             self.new_column()
@@ -683,7 +727,7 @@ class _GlancesCurses:
     def __display_top(self, stat_display, stats):
         """Display the second line in the Curses interface.
 
-        <QUICKLOOK> + CPU|PERCPU + <GPU> + MEM + SWAP + LOAD
+        <QUICKLOOK> + CPU|PERCPU + <NPU> + <GPU> + MEM + SWAP + LOAD
         """
         self.init_column()
         self.new_line()
@@ -699,7 +743,7 @@ class _GlancesCurses:
             )
 
         # Width of all plugins
-        stats_width = sum(itervalues(plugin_widths))
+        stats_width = sum(plugin_widths.values())
 
         # Number of plugin but quicklook
         stats_number = sum(
@@ -725,7 +769,7 @@ class _GlancesCurses:
                 logger.debug(f"Quicklook plugin not available ({e})")
             else:
                 plugin_widths['quicklook'] = self.get_stats_display_width(stat_display["quicklook"])
-                stats_width = sum(itervalues(plugin_widths)) + 1
+                stats_width = sum(plugin_widths.values()) + 1
             self.space_between_column = 1
             self.display_plugin(stat_display["quicklook"])
             self.new_column()
@@ -746,7 +790,7 @@ class _GlancesCurses:
                         if hasattr(self.args, 'disable_' + p)
                         else 0
                     )
-                    stats_width = sum(itervalues(plugin_widths)) + 1
+                    stats_width = sum(plugin_widths.values()) + 1
                     self.space_between_column = max(
                         1, int((self.term_window.getmaxyx()[1] - stats_width) / (stats_number - 1))
                     )
@@ -1131,6 +1175,11 @@ class _GlancesCurses:
         while not countdown.finished() and not isexitkey:
             # Getkey
             pressedkey = self.__catch_key(return_to_browser=return_to_browser)
+
+            if pressedkey == -1:
+                self.wait()
+                continue
+
             isexitkey = pressedkey == ord('\x1b') or pressedkey == ord('q')
 
             if pressedkey == curses.KEY_F5 or self.pressedkey == 18:
@@ -1138,7 +1187,7 @@ class _GlancesCurses:
                 self.clear()
                 return isexitkey
 
-            if pressedkey in (curses.KEY_UP, 65, curses.KEY_DOWN, 66):
+            if pressedkey in (curses.KEY_UP, 65, curses.KEY_DOWN, 66, curses.KEY_LEFT, 68, curses.KEY_RIGHT, 67):
                 # Up of won key pressed, reset the countdown
                 # Better for user experience
                 countdown.reset()
@@ -1209,9 +1258,16 @@ class _GlancesCurses:
 class GlancesCursesStandalone(_GlancesCurses):
     """Class for the Glances curse standalone."""
 
+    # Default number of processes to displayed is set to 50
+    glances_processes.max_processes = 50
+
 
 class GlancesCursesClient(_GlancesCurses):
     """Class for the Glances curse client."""
+
+    # Default number of processes to displayed is set to 50
+    # For the moment, cursor in client/server mode is not supported see #3221
+    glances_processes.max_processes = 50
 
 
 class GlancesTextbox(Textbox):

@@ -45,11 +45,12 @@ fields_description = {
     'quality_level': {
         'description': 'Signal strong level.',
         'unit': 'dBm',
+        'alert': True,
     },
 }
 
 
-class PluginModel(GlancesPluginModel):
+class WifiPlugin(GlancesPluginModel):
     """Glances Wifi plugin.
 
     Get stats of the current Wifi hotspots.
@@ -135,7 +136,7 @@ class PluginModel(GlancesPluginModel):
                 wifi_stats = f.readline()
         return ret
 
-    def get_alert(self, value):
+    def get_alert(self, value, header=None, action_key=None, log=False):
         """Overwrite the default get_alert method.
 
         Alert is on signal quality where lower is better...

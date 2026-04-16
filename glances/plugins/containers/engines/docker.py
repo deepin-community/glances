@@ -9,9 +9,9 @@
 """Docker Extension unit for Glances' Containers plugin."""
 
 import time
-from typing import Any, Optional
+from typing import Any
 
-from glances.globals import iterkeys, itervalues, nativestr, pretty_date, replace_special_chars
+from glances.globals import nativestr, pretty_date, replace_special_chars
 from glances.logger import logger
 from glances.stats_streamer import ThreadedIterableStreamer
 
@@ -83,7 +83,7 @@ class DockerStatsFetcher:
         # In case no update, default to 1
         return max(1, self._streamer.last_update_time - self._last_stats_computed_time)
 
-    def _get_cpu_stats(self) -> Optional[dict[str, float]]:
+    def _get_cpu_stats(self) -> dict[str, float] | None:
         """Return the container CPU usage.
 
         Output: a dict {'total': 1.49}
@@ -117,7 +117,7 @@ class DockerStatsFetcher:
         # Return the stats
         return stats
 
-    def _get_memory_stats(self) -> Optional[dict[str, float]]:
+    def _get_memory_stats(self) -> dict[str, float] | None:
         """Return the container MEMORY.
 
         Output: a dict {'usage': ..., 'limit': ..., 'inactive_file': ...}
@@ -140,7 +140,7 @@ class DockerStatsFetcher:
         # Return the stats
         return stats
 
-    def _get_network_stats(self) -> Optional[dict[str, float]]:
+    def _get_network_stats(self) -> dict[str, float] | None:
         """Return the container network usage using the Docker API (v1.0 or higher).
 
         Output: a dict {'time_since_update': 3000, 'rx': 10, 'tx': 65}.
@@ -169,7 +169,7 @@ class DockerStatsFetcher:
         # Return the stats
         return stats
 
-    def _get_io_stats(self) -> Optional[dict[str, float]]:
+    def _get_io_stats(self) -> dict[str, float] | None:
         """Return the container IO usage using the Docker API (v1.0 or higher).
 
         Output: a dict {'time_since_update': 3000, 'ior': 10, 'iow': 65}.
@@ -210,7 +210,7 @@ class DockerStatsFetcher:
 class DockerExtension:
     """Glances' Containers Plugin's Docker Extension unit"""
 
-    CONTAINER_ACTIVE_STATUS = ['running', 'paused']
+    CONTAINER_ACTIVE_STATUS = ['running', 'healthy', 'paused']
 
     def __init__(self):
         self.disable = disable_plugin_docker
@@ -242,7 +242,7 @@ class DockerExtension:
 
     def stop(self) -> None:
         # Stop all streaming threads
-        for t in itervalues(self.stats_fetchers):
+        for t in self.stats_fetchers.values():
             t.stop()
 
     def update(self, all_tag) -> tuple[dict, list[dict]]:
@@ -276,7 +276,7 @@ class DockerExtension:
                 self.stats_fetchers[container.id] = DockerStatsFetcher(container)
 
         # Stop threads for non-existing containers
-        absent_containers = set(iterkeys(self.stats_fetchers)) - {c.id for c in containers}
+        absent_containers = set(self.stats_fetchers.keys()) - {c.id for c in containers}
         for container_id in absent_containers:
             # Stop the StatsFetcher
             logger.debug(f"{self.ext_name} plugin - Stop thread for old container {container_id[:12]}")
@@ -295,11 +295,13 @@ class DockerExtension:
 
     def generate_stats(self, container) -> dict[str, Any]:
         # Init the stats for the current container
+        # Manage healthy status (see issue #3402)
+        status = container.attrs['State'].get('Health', container.attrs['State']).get('Status', '')
         stats = {
             'key': self.key,
             'name': nativestr(container.name),
             'id': container.id,
-            'status': container.attrs['State']['Status'],
+            'status': status,
             'created': container.attrs['Created'],
             'command': [],
             'io': {},
@@ -312,14 +314,16 @@ class DockerExtension:
             'memory_percent': None,
             'network_rx': None,
             'network_tx': None,
+            'ports': '',
             'uptime': None,
         }
 
         # Container Image
         try:
-            # API fails on Unraid - See issue 2233
+            # API fails on Unraid - See issue #2233
             stats['image'] = (','.join(container.image.tags if container.image.tags else []),)
-        except requests.exceptions.HTTPError:
+        except (requests.exceptions.HTTPError, docker.errors.NullResource):
+            # Container plugin crashes with docker.errors.NullResource on Podman pod infra containers issue #3498
             stats['image'] = ''
 
         if container.attrs['Config'].get('Entrypoint', None):
@@ -341,6 +345,8 @@ class DockerExtension:
         stats['memory_usage'] = stats['memory'].get('usage')
         if stats['memory'].get('cache') is not None:
             stats['memory_usage'] -= stats['memory']['cache']
+        stats['memory_inactive_file'] = stats['memory'].get('inactive_file')
+        stats['memory_limit'] = stats['memory'].get('limit')
 
         if all(k in stats['io'] for k in ('ior', 'iow', 'time_since_update')):
             stats['io_rx'] = stats['io']['ior'] // stats['io']['time_since_update']
@@ -355,5 +361,14 @@ class DockerExtension:
 
         # Manage special chars in command (see issue#2733)
         stats['command'] = replace_special_chars(' '.join(stats['command']))
+
+        # Manage ports (see issue#2054)
+        if hasattr(container, 'ports'):
+            stats['ports'] = ','.join(
+                [
+                    f'{container.ports[cp][0]["HostPort"]}->{cp}' if container.ports[cp] else f'{cp}'
+                    for cp in container.ports
+                ]
+            )
 
         return stats

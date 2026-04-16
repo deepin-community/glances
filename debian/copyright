@@ -14,7 +14,7 @@ License: LGPL-3
 
 Files: debian/*
 Copyright: 2016, Sebastien Badia <seb@sebian.fr>
- 2015-2025, Daniel Echeverri <epsilon@debian.org>
+ 2015-2026, Daniel Echeverri <epsilon@debian.org>
  2014, Rémi Verchère <rverchere@hmail.com>
  2012-2014, Geoffroy Youri Berret <efrim@azylum.org>
 License: LGPL-3+
@@ -33,7 +33,7 @@ Files: glances/outputs/glances_bars.py
  glances/outputs/glances_restful_api.py
  glances/outputs/glances_sparklines.py
  glances/outputs/glances_stdout.py
- glances/outputs/glances_stdout_apidoc.py
+ glances/outputs/glances_stdout_api_doc.py
  glances/outputs/glances_stdout_csv.py
  glances/outputs/glances_stdout_issue.py
  glances/outputs/glances_stdout_json.py

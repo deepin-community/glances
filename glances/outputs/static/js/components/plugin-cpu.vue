@@ -26,8 +26,9 @@
                                         </td>
                                     </tr>
                                     <tr>
-                                        <td scope="col" v-if="iowait != undefined">iowait:</td>
-                                        <td scope="col" class="text-end" v-if="iowait != undefined"
+                                        <td v-if="iowait != undefined" scope="col">iowait:</td>
+                                        <td
+v-if="iowait != undefined" scope="col" class="text-end"
                                             :class="getDecoration('iowait')"><span>{{ iowait }}%</span></td>
                                     </tr>
                                 </tbody>
@@ -38,28 +39,30 @@
                                 <table class="table table-sm table-borderless">
                                     <tbody>
                                         <tr>
-                                            <td scope="col" v-show="idle != undefined">idle:</td>
-                                            <td scope="col" class="text-end" v-show="idle != undefined"><span>{{ idle
+                                            <td v-show="idle != undefined" scope="col">idle:</td>
+                                            <td v-show="idle != undefined" scope="col" class="text-end"><span>{{ idle
                                                     }}%</span></td>
                                         </tr>
                                         <tr>
-                                            <td scope="col" v-show="irq != undefined">irq:</td>
-                                            <td scope="col" class="text-end" v-show="irq != undefined"><span>{{ irq
+                                            <td v-show="irq != undefined" scope="col">irq:</td>
+                                            <td v-show="irq != undefined" scope="col" class="text-end"><span>{{ irq
                                                     }}%</span></td>
                                         </tr>
                                         <tr>
-                                            <td scope="col" v-show="nice != undefined">nice:</td>
-                                            <td scope="col" class="text-end" v-show="nice != undefined"><span>{{ nice
+                                            <td v-show="nice != undefined" scope="col">nice:</td>
+                                            <td v-show="nice != undefined" scope="col" class="text-end"><span>{{ nice
                                                     }}%</span></td>
                                         </tr>
                                         <tr>
-                                            <td scope="col" v-if="iowait == undefined && dpc != undefined">dpc:</td>
-                                            <td scope="col" class="text-end"
-                                                v-if="iowait == undefined && dpc != undefined"
+                                            <td v-if="iowait == undefined && dpc != undefined" scope="col">dpc:</td>
+                                            <td
+v-if="iowait == undefined && dpc != undefined" scope="col"
+                                                class="text-end"
                                                 :class="getDecoration('dpc')"><span>{{ dpc
                                                     }}%</span></td>
-                                            <td scope="col" v-show="steal != undefined">steal:</td>
-                                            <td scope="col" class="text-end" v-show="steal != undefined"
+                                            <td v-show="steal != undefined" scope="col">steal:</td>
+                                            <td
+v-show="steal != undefined" scope="col" class="text-end"
                                                 :class="getDecoration('steal')"><span>{{ steal
                                                     }}%</span></td>
                                         </tr>
@@ -72,32 +75,35 @@
                                 <table class="table table-sm table-borderless">
                                     <tbody>
                                         <tr>
-                                            <td scope="col" v-if="nice != undefined && ctx_switches != undefined">
+                                            <td v-if="nice != undefined && ctx_switches != undefined" scope="col">
                                                 ctx_sw:</td>
-                                            <td scope="col" class="text-end"
-                                                v-if="nice != undefined && ctx_switches != undefined"
+                                            <td
+v-if="nice != undefined && ctx_switches != undefined" scope="col"
+                                                class="text-end"
                                                 :class="getDecoration('ctx_switches')"><span>{{ ctx_switches
                                                     }}</span>
                                             </td>
                                         </tr>
                                         <tr>
-                                            <td scope="col" v-show="interrupts != undefined">inter:</td>
-                                            <td scope="col" class="text-end" v-show="interrupts != undefined"><span>{{
+                                            <td v-show="interrupts != undefined" scope="col">inter:</td>
+                                            <td v-show="interrupts != undefined" scope="col" class="text-end"><span>{{
                                                 interrupts
                                             }}</span></td>
                                         </tr>
                                         <tr>
-                                            <td scope="col"
-                                                v-if="!isWindows && !isSunOS && soft_interrupts != undefined">sw_int:
+                                            <td
+v-if="!isWindows && !isSunOS && soft_interrupts != undefined"
+                                                scope="col">sw_int:
                                             </td>
-                                            <td scope="col" class="text-end"
-                                                v-if="!isWindows && !isSunOS && soft_interrupts != undefined"><span>{{
+                                            <td
+v-if="!isWindows && !isSunOS && soft_interrupts != undefined" scope="col"
+                                                class="text-end"><span>{{
                                                     soft_interrupts
                                                 }}</span></td>
                                         </tr>
                                         <tr>
-                                            <td scope="col" v-if="isLinux && guest != undefined">guest:</td>
-                                            <td scope="col" class="text-end" v-if="isLinux && guest != undefined">
+                                            <td v-if="isLinux && guest != undefined" scope="col">guest:</td>
+                                            <td v-if="isLinux && guest != undefined" scope="col" class="text-end">
                                                 <span>{{
                                                     guest
                                                     }}%</span>
@@ -116,85 +122,89 @@
 
 <script>
 export default {
-    props: {
-        data: {
-            type: Object
-        }
-    },
-    computed: {
-        stats() {
-            return this.data.stats['cpu'];
-        },
-        view() {
-            return this.data.views['cpu'];
-        },
-        isLinux() {
-            return this.data.isLinux;
-        },
-        isSunOS() {
-            return this.data.isSunOS;
-        },
-        isWindows() {
-            return this.data.isWindows;
-        },
-        total() {
-            return this.stats.total;
-        },
-        user() {
-            return this.stats.user;
-        },
-        system() {
-            return this.stats.system;
-        },
-        idle() {
-            return this.stats.idle;
-        },
-        nice() {
-            return this.stats.nice;
-        },
-        irq() {
-            return this.stats.irq;
-        },
-        iowait() {
-            return this.stats.iowait;
-        },
-        dpc() {
-            return this.stats.dpc;
-        },
-        steal() {
-            return this.stats.steal;
-        },
-        guest() {
-            return this.stats.guest;
-        },
-        ctx_switches() {
-            const { stats } = this;
-            return stats.ctx_switches
-                ? Math.floor(stats.ctx_switches / stats.time_since_update)
-                : null;
-        },
-        interrupts() {
-            const { stats } = this;
-            return stats.interrupts ? Math.floor(stats.interrupts / stats.time_since_update) : null;
-        },
-        soft_interrupts() {
-            const { stats } = this;
-            return stats.soft_interrupts
-                ? Math.floor(stats.soft_interrupts / stats.time_since_update)
-                : null;
-        },
-        syscalls() {
-            const { stats } = this;
-            return stats.syscalls ? Math.floor(stats.syscalls / stats.time_since_update) : null;
-        }
-    },
-    methods: {
-        getDecoration(value) {
-            if (this.view[value] === undefined) {
-                return;
-            }
-            return this.view[value].decoration.toLowerCase();
-        }
-    }
+	props: {
+		data: {
+			type: Object,
+		},
+	},
+	computed: {
+		stats() {
+			return this.data.stats["cpu"];
+		},
+		view() {
+			return this.data.views["cpu"];
+		},
+		isLinux() {
+			return this.data.isLinux;
+		},
+		isSunOS() {
+			return this.data.isSunOS;
+		},
+		isWindows() {
+			return this.data.isWindows;
+		},
+		total() {
+			return this.stats.total;
+		},
+		user() {
+			return this.stats.user;
+		},
+		system() {
+			return this.stats.system;
+		},
+		idle() {
+			return this.stats.idle;
+		},
+		nice() {
+			return this.stats.nice;
+		},
+		irq() {
+			return this.stats.irq;
+		},
+		iowait() {
+			return this.stats.iowait;
+		},
+		dpc() {
+			return this.stats.dpc;
+		},
+		steal() {
+			return this.stats.steal;
+		},
+		guest() {
+			return this.stats.guest;
+		},
+		ctx_switches() {
+			const { stats } = this;
+			return stats.ctx_switches
+				? Math.floor(stats.ctx_switches / stats.time_since_update)
+				: null;
+		},
+		interrupts() {
+			const { stats } = this;
+			return stats.interrupts
+				? Math.floor(stats.interrupts / stats.time_since_update)
+				: null;
+		},
+		soft_interrupts() {
+			const { stats } = this;
+			return stats.soft_interrupts
+				? Math.floor(stats.soft_interrupts / stats.time_since_update)
+				: null;
+		},
+		syscalls() {
+			const { stats } = this;
+			return stats.syscalls
+				? Math.floor(stats.syscalls / stats.time_since_update)
+				: null;
+		},
+	},
+	methods: {
+		getDecoration(value) {
+			if (this.view[value] === undefined) {
+				return;
+			}
+			return this.view[value].decoration.toLowerCase();
+		},
+	},
 };
 </script>

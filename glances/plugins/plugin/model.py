@@ -14,10 +14,21 @@ I am your father...
 
 import copy
 import re
+from datetime import datetime
 
 from glances.actions import GlancesActions
 from glances.events_list import glances_events
-from glances.globals import dictlist, dictlist_json_dumps, iterkeys, itervalues, json_dumps, listkeys, mean, nativestr
+from glances.globals import (
+    auto_unit,
+    dictlist,
+    dictlist_json_dumps,
+    json_dumps,
+    list_to_dict,
+    listkeys,
+    mean,
+    nativestr,
+    split_esc,
+)
 from glances.history import GlancesHistory
 from glances.logger import logger
 from glances.outputs.glances_unicode import unicode_message
@@ -121,6 +132,9 @@ class GlancesPluginModel:
         # Init stats description
         self.fields_description = fields_description
 
+        # Init MMM (Min/Max/Mean) tracking for fields with mmm=True
+        self._mmm_fields = self._init_mmm_fields()
+
         # Init the stats
         self.stats_init_value = stats_init_value
         self.time_since_last_update = None
@@ -128,17 +142,159 @@ class GlancesPluginModel:
         self.stats_previous = None
         self.reset()
 
-    def __repr__(self):
-        """Return the raw stats."""
-        return str(self.stats)
-
     def __str__(self):
         """Return the human-readable stats."""
         return str(self.stats)
 
+    def __repr__(self):
+        """Return the raw stats."""
+        if isinstance(self.stats, list):
+            return str(list_to_dict(self.stats))
+        return str(self.stats)
+
+    def __getitem__(self, item):
+        """Return the stats item."""
+        if isinstance(self.stats, dict) and item in self.stats:
+            return self.stats[item]
+
+        if isinstance(self.stats, list):
+            ltd = list_to_dict(self.stats)
+            if item in ltd:
+                return ltd[item]
+
+        raise KeyError(f"'{self.__class__.__name__}' object has no key '{item}'")
+
+    def keys(self):
+        """Return the keys of the stats."""
+        if isinstance(self.stats, dict):
+            return listkeys(self.stats)
+        if isinstance(self.stats, list):
+            return listkeys(list_to_dict(self.stats))
+        return []
+
+    def get(self, item, default=None):
+        """Return the stats item or default if not found."""
+        try:
+            return self[item]
+        except KeyError:
+            return default
+
     def get_init_value(self):
         """Return a copy of the init value."""
         return copy.copy(self.stats_init_value)
+
+    def _init_mmm_fields(self):
+        """Initialize MMM (Min/Max/Mean) field tracking.
+
+        Scan fields_description for fields with mmm=True and create tracking structures.
+        Also automatically add field descriptions for the generated fields.
+
+        Returns a dictionary with mmm field tracking info.
+        """
+        mmm_fields = {}
+
+        if self.fields_description is None:
+            return mmm_fields
+
+        # Find all fields with mmm=True (iterate over keys to avoid dict size change during iteration)
+        mmm_field_names = [
+            field_name for field_name, field_info in self.fields_description.items() if field_info.get('mmm', False)
+        ]
+
+        # Now process the mmm fields
+        for field_name in mmm_field_names:
+            field_info = self.fields_description[field_name]
+
+            # Initialize tracking for this field
+            mmm_fields[field_name] = {
+                'values': [],  # Keep history for mean calculation
+                'min': None,
+                'max': None,
+                'unit': field_info.get('unit', ''),
+            }
+
+            # Automatically add field descriptions for the generated fields if not already present
+            suffix_map = {
+                '_min': f"Minimum {field_name} observed since Glances startup.",
+                '_max': f"Maximum {field_name} observed since Glances startup.",
+                '_mean': f"Mean (average) {field_name} computed from the history.",
+            }
+
+            for suffix, description in suffix_map.items():
+                generated_field = field_name + suffix
+                if generated_field not in self.fields_description:
+                    self.fields_description[generated_field] = {
+                        'description': description,
+                        'unit': field_info.get('unit', ''),
+                    }
+
+        return mmm_fields
+
+    def _update_mmm_fields(self, stats):
+        """Update MMM (Min/Max/Mean) fields for all fields with mmm=True.
+
+        This method should be called after the plugin's update method.
+        It will compute and add _min, _max, and _mean fields to stats.
+
+        Args:
+            stats: The stats dictionary to update (should be a dict or dict from list item)
+
+        Returns:
+            The stats dictionary with mmm fields added
+        """
+        if not isinstance(stats, dict) or not self._mmm_fields:
+            return stats
+
+        # Update mmm fields for each tracked field
+        for field_name, mmm_info in self._mmm_fields.items():
+            if field_name not in stats:
+                continue
+
+            current_value = stats[field_name]
+
+            # Only process numeric values
+            if current_value is None or (not isinstance(current_value, (int, float))):
+                continue
+
+            # Keep history for mean calculation (limit to reasonable size to avoid memory growth)
+            max_history_size = 28800  # ~1 day at 1 sample/sec
+            mmm_info['values'].append(current_value)
+            if len(mmm_info['values']) > max_history_size:
+                mmm_info['values'].pop(0)
+
+            # Update min and max
+            if mmm_info['min'] is None or current_value < mmm_info['min']:
+                mmm_info['min'] = current_value
+            if mmm_info['max'] is None or current_value > mmm_info['max']:
+                mmm_info['max'] = current_value
+
+            # Add generated fields to stats
+            stats[field_name + '_min'] = mmm_info['min']
+            stats[field_name + '_max'] = mmm_info['max']
+
+            # Compute mean from history
+            if mmm_info['values']:
+                stats[field_name + '_mean'] = round(mean(mmm_info['values']), 2)
+
+        return stats
+
+    def _update_mmm_fields_on_list(self, stats_list):
+        """Update MMM fields for a list of stats dictionaries.
+
+        Args:
+            stats_list: A list of stats dictionaries
+
+        Returns:
+            The list with mmm fields updated for each item
+        """
+        if not isinstance(stats_list, list):
+            return stats_list
+
+        for stat in stats_list:
+            if isinstance(stat, dict):
+                self._update_mmm_fields(stat)
+
+        return stats_list
 
     def reset(self):
         """Reset the stats.
@@ -188,16 +344,20 @@ class GlancesPluginModel:
 
     def update_stats_history(self):
         """Update stats history."""
+        # Exit if no history
+        if not self.history_enable():
+            return
         # Build the history
-        if not (self.get_export() and self.history_enable()):
+        _get_export = self.get_export()
+        if not (_get_export and self.history_enable()):
             return
         # Itern through items history
         item_name = '' if self.get_key() is None else self.get_key()
         for i in self.get_items_history_list():
-            if isinstance(self.get_export(), list):
+            if isinstance(_get_export, list):
                 # Stats is a list of data
                 # Iter through stats (for example, iter through network interface)
-                for l_export in self.get_export():
+                for l_export in _get_export:
                     if i['name'] in l_export:
                         self.stats_history.add(
                             nativestr(l_export[item_name]) + '_' + nativestr(i['name']),
@@ -210,7 +370,7 @@ class GlancesPluginModel:
                 # Add the item to the history directly
                 self.stats_history.add(
                     nativestr(i['name']),
-                    self.get_export()[i['name']],
+                    _get_export[i['name']],
                     description=i['description'],
                     history_max_size=self._limits['history_size'],
                 )
@@ -330,16 +490,14 @@ class GlancesPluginModel:
         ret = {}
         if bulk:
             # Bulk request
-            snmp_result = snmp_client.getbulk_by_oid(0, 10, *list(itervalues(snmp_oid)))
+            snmp_result = snmp_client.getbulk_by_oid(0, 10, *list(snmp_oid.values()))
             logger.info(snmp_result)
             if len(snmp_oid) == 1:
                 # Bulk command for only one OID
                 # Note: key is the item indexed but the OID result
                 for item in snmp_result:
-                    if iterkeys(item)[0].startswith(itervalues(snmp_oid)[0]):
-                        ret[iterkeys(snmp_oid)[0] + iterkeys(item)[0].split(itervalues(snmp_oid)[0])[1]] = itervalues(
-                            item
-                        )[0]
+                    if item.keys()[0].startswith(snmp_oid.values()[0]):
+                        ret[snmp_oid.keys()[0] + item.keys()[0].split(snmp_oid.values()[0])[1]] = item.values()[0]
             else:
                 # Build the internal dict with the SNMP result
                 # Note: key is the first item in the snmp_oid
@@ -347,7 +505,7 @@ class GlancesPluginModel:
                 for item in snmp_result:
                     item_stats = {}
                     item_key = None
-                    for key in iterkeys(snmp_oid):
+                    for key in snmp_oid:
                         oid = snmp_oid[key] + '.' + str(index)
                         if oid in item:
                             if item_key is None:
@@ -359,10 +517,10 @@ class GlancesPluginModel:
                     index += 1
         else:
             # Simple get request
-            snmp_result = snmp_client.get_by_oid(*list(itervalues(snmp_oid)))
+            snmp_result = snmp_client.get_by_oid(*list(snmp_oid.values()))
 
             # Build the internal dict with the SNMP result
-            for key in iterkeys(snmp_oid):
+            for key in snmp_oid:
                 ret[key] = snmp_result[snmp_oid[key]]
 
         return ret
@@ -370,6 +528,11 @@ class GlancesPluginModel:
     def get_raw(self):
         """Return the stats object."""
         return self.stats
+
+    def get_api(self):
+        """Return the stats object for the API.
+        By default, return the raw stats."""
+        return self.get_raw()
 
     def get_export(self):
         """Return the stats object to export.
@@ -440,6 +603,58 @@ class GlancesPluginModel:
             return default
         return self.fields_description[item].get(key, default)
 
+    def _build_field_decoration(self, field):
+        """Return the field decoration.
+
+        The decoration is used to display the field in the UI.
+        """
+        # Manage the decoration
+        if self.fields_description and field in self.fields_description:
+            if (
+                self.fields_description[field].get('rate') is True
+                and isinstance(self.stats, dict)
+                and self.stats.get('time_since_update', 0) == 0
+            ):
+                return 'DEFAULT'
+            if self.fields_description[field].get('log') is True:
+                return self.get_alert_log(self.stats[field], header=field)
+            if self.fields_description[field].get('alert') is True:
+                return self.get_alert(self.stats[field], header=field)
+        return 'DEFAULT'
+
+    def _build_field_optional(self, field):
+        """Return true if the field is optional."""
+        if self.fields_description and field in self.fields_description:
+            return self.fields_description[field].get('optional', False)
+        return False
+
+    def _build_view_for_field(self, key=None, field=None):
+        view = {
+            'decoration': self._build_field_decoration(field),
+            'optional': self._build_field_optional(field),
+            'additional': False,
+            'splittable': False,
+            'hidden': False,
+        }
+
+        # Manage the hidden feature
+        # Allow to automatically hide fields when values is never different than 0
+        # Refactoring done for #2929
+        if not self.hide_zero:
+            view['hidden'] = False
+        elif key and key in self.views and field in self.views[key] and 'hidden' in self.views[key][field]:
+            view['hidden'] = self.views[key][field]['hidden']
+            if (
+                field in self.hide_zero_fields
+                and self.get_raw_stats_key(item=field, key=key).get(field) >= self.hide_threshold_bytes
+            ):
+                view['hidden'] = False
+            # logger.info(f'{key=} {field=} {view["hidden"]=}')
+        else:
+            view['hidden'] = field in self.hide_zero_fields
+
+        return view
+
     def update_views(self):
         """Update the stats views.
 
@@ -454,52 +669,17 @@ class GlancesPluginModel:
         """
         ret = {}
 
-        if isinstance(self.get_raw(), list) and self.get_raw() is not None and self.get_key() is not None:
+        if self.get_raw() is not None and isinstance(self.get_raw(), list) and self.get_key() is not None:
             # Stats are stored in a list of dict (ex: DISKIO, NETWORK, FS...)
             for i in self.get_raw():
                 key = i[self.get_key()]
                 ret[key] = {}
                 for field in listkeys(i):
-                    value = {
-                        'decoration': 'DEFAULT',
-                        'optional': False,
-                        'additional': False,
-                        'splittable': False,
-                    }
-                    # Manage the hidden feature
-                    # Allow to automatically hide fields when values is never different than 0
-                    # Refactoring done for #2929
-                    if not self.hide_zero:
-                        value['hidden'] = False
-                    elif key in self.views and field in self.views[key] and 'hidden' in self.views[key][field]:
-                        value['hidden'] = self.views[key][field]['hidden']
-                        if field in self.hide_zero_fields and i[field] > self.hide_threshold_bytes:
-                            value['hidden'] = False
-                    else:
-                        value['hidden'] = field in self.hide_zero_fields
-                    ret[key][field] = value
+                    ret[key][field] = self._build_view_for_field(key=key, field=field)
         elif isinstance(self.get_raw(), dict) and self.get_raw() is not None:
             # Stats are stored in a dict (ex: CPU, LOAD...)
             for field in listkeys(self.get_raw()):
-                value = {
-                    'decoration': 'DEFAULT',
-                    'optional': False,
-                    'additional': False,
-                    'splittable': False,
-                    'hidden': False,
-                }
-                # Manage the hidden feature
-                # Allow to automatically hide fields when values is never different than 0
-                # Refactoring done for #2929
-                if not self.hide_zero:
-                    value['hidden'] = False
-                elif field in self.views and 'hidden' in self.views[field]:
-                    value['hidden'] = self.views[field]['hidden']
-                    if field in self.hide_zero_fields and self.get_raw()[field] >= self.hide_threshold_bytes:
-                        value['hidden'] = False
-                else:
-                    value['hidden'] = field in self.hide_zero_fields
-                ret[field] = value
+                ret[field] = self._build_view_for_field(key=None, field=field)
 
         self.views = ret
 
@@ -526,9 +706,10 @@ class GlancesPluginModel:
             item_views = self.views
         else:
             item_views = self.views[item]
-
-        if key is None or key not in item_views:
+        if key is None:
             return item_views
+        if key not in item_views:
+            return 'DEFAULT'
         if option is None:
             return item_views[key]
         if option in item_views[key]:
@@ -610,10 +791,12 @@ class GlancesPluginModel:
         """
         return self.stats
 
-    def get_stat_name(self, header=""):
-        """Return the stat name with an optional header"""
+    def get_stat_name(self, header=None, action_key=None):
+        """Return the stat name with an optional action_key and header"""
         ret = self.plugin_name
-        if header != '':
+        if action_key is not None and action_key != '':
+            ret += '_' + action_key
+        if header is not None and header != '':
             ret += '_' + header
         return ret
 
@@ -624,7 +807,7 @@ class GlancesPluginModel:
         maximum=100,
         highlight_zero=True,
         is_max=False,
-        header="",
+        header=None,
         action_key=None,
         log=False,
     ):
@@ -662,7 +845,7 @@ class GlancesPluginModel:
             return 'DEFAULT'
 
         # Build the stat_name
-        stat_name = self.get_stat_name(header=header).lower()
+        stat_name = self.get_stat_name(header=header, action_key=action_key).lower()
 
         # Manage limits
         # If is_max is set then default style is set to MAX else default is set to OK
@@ -688,7 +871,7 @@ class GlancesPluginModel:
 
         # Manage log
         log_str = ""
-        if self.get_limit_log(stat_name=stat_name, default_action=log):
+        if self.get_limit_log(stat_name=stat_name, default_action=log) and ret != 'DEFAULT':
             # Add _LOG to the return string
             # So stats will be highlighted with a specific color
             log_str = "_LOG"
@@ -733,17 +916,29 @@ class GlancesPluginModel:
 
             # A command line is available for the current alert
             # 1) Build the {{mustache}} dictionary
-            if isinstance(self.get_stats_action(), list):
+            stats_action = copy.deepcopy(self.get_stats_action())
+            if isinstance(stats_action, list):
                 # If the stats are stored in a list of dict (fs plugin for example)
-                # Return the dict for the current header
                 mustache_dict = {}
-                for item in self.get_stats_action():
+                for item in stats_action:
+                    # Add the limit to the mustache dict
+                    item['critical'] = self.get_limit('critical', stat_name=stat_name)
+                    item['warning'] = self.get_limit('warning', stat_name=stat_name)
+                    item['careful'] = self.get_limit('careful', stat_name=stat_name)
+                    # Add the current time (now)
+                    item['time'] = datetime.now().isoformat()
                     if item[self.get_key()] == action_key:
                         mustache_dict = item
                         break
             else:
                 # Use the stats dict
-                mustache_dict = self.get_stats_action()
+                # Add the limit to the mustache dict
+                stats_action['critical'] = self.get_limit('critical', stat_name=stat_name)
+                stats_action['warning'] = self.get_limit('warning', stat_name=stat_name)
+                stats_action['careful'] = self.get_limit('careful', stat_name=stat_name)
+                # Add the current time (now)
+                stats_action['time'] = datetime.now().isoformat()
+                mustache_dict = stats_action
             # 2) Run the action
             self.actions.run(stat_name, trigger, command, repeat, mustache_dict=mustache_dict)
 
@@ -805,7 +1000,7 @@ class GlancesPluginModel:
             return self._limits[self.plugin_name + '_log'][0].lower() == 'true'
         return default_action
 
-    def get_conf_value(self, value, header="", plugin_name=None, default=[]):
+    def get_conf_value(self, value, header="", plugin_name=None, convert_bool=False, default=[]):
         """Return the configuration (header_) value for the current plugin.
 
         ...or the one given by the plugin_name var.
@@ -819,7 +1014,8 @@ class GlancesPluginModel:
             plugin_name = plugin_name + '_' + header
 
         try:
-            return self._limits[plugin_name + '_' + value]
+            ret = self._limits[plugin_name + '_' + value]
+            return bool(ret[0]) if convert_bool else ret
         except KeyError:
             return default
 
@@ -830,12 +1026,14 @@ class GlancesPluginModel:
 
         The show configuration list is defined in the glances.conf file.
         It is a comma-separated list of regexp.
+
         Example for diskio:
         show=sda.*
         """
-        # TODO: possible optimisation: create a re.compile list
         return any(
-            j for j in [re.fullmatch(i.lower(), value.lower()) for i in self.get_conf_value('show', header=header)]
+            re.fullmatch(i, value, re.I)
+            or (self.has_alias(value) is not None and re.fullmatch(i, self.has_alias(value), re.I))
+            for i in self.get_conf_value('show', header=header)
         )
 
     def is_hide(self, value, header=""):
@@ -843,12 +1041,14 @@ class GlancesPluginModel:
 
         The hide configuration list is defined in the glances.conf file.
         It is a comma-separated list of regexp.
+
         Example for diskio:
         hide=sda2,sda5,loop.*
         """
-        # TODO: possible optimisation: create a re.compile list
         return any(
-            j for j in [re.fullmatch(i.lower(), value.lower()) for i in self.get_conf_value('hide', header=header)]
+            re.fullmatch(i, value, re.I)
+            or (self.has_alias(value) is not None and re.fullmatch(i, self.has_alias(value), re.I))
+            for i in self.get_conf_value('hide', header=header)
         )
 
     def is_display(self, value, header=""):
@@ -857,9 +1057,18 @@ class GlancesPluginModel:
             return self.is_show(value, header=header)
         return not self.is_hide(value, header=header)
 
+    def is_display_any(self, *values, header=""):
+        """Return True if any of the values should be displayed in the UI"""
+        if self.get_conf_value('show', header=header) != []:
+            return any(self.is_show(value, header=header) for value in values)
+        return not any(self.is_hide(value, header=header) for value in values)
+
     def read_alias(self):
         if self.plugin_name + '_' + 'alias' in self._limits:
-            return {i.split(':')[0].lower(): i.split(':')[1] for i in self._limits[self.plugin_name + '_' + 'alias']}
+            return {
+                split_esc(i, ':')[0].lower(): split_esc(i, ':')[1]
+                for i in self._limits[self.plugin_name + '_' + 'alias']
+            }
         return {}
 
     def has_alias(self, header):
@@ -985,11 +1194,7 @@ class GlancesPluginModel:
             unit_type = 'float'
 
         # Is it a rate ? Yes, get the pre-computed rate value
-        if (
-            key in self.fields_description
-            and 'rate' in self.fields_description[key]
-            and self.fields_description[key]['rate'] is True
-        ):
+        if key in self.fields_description and self.fields_description[key].get('rate', False) is True:
             value = self.stats.get(key + '_rate_per_sec', None)
         else:
             value = self.stats.get(key, None)
@@ -1042,59 +1247,8 @@ class GlancesPluginModel:
         self._align = value
 
     def auto_unit(self, number, low_precision=False, min_symbol='K', none_symbol='-'):
-        """Make a nice human-readable string out of number.
-
-        Number of decimal places increases as quantity approaches 1.
-        CASE: 613421788        RESULT:       585M low_precision:       585M
-        CASE: 5307033647       RESULT:      4.94G low_precision:       4.9G
-        CASE: 44968414685      RESULT:      41.9G low_precision:      41.9G
-        CASE: 838471403472     RESULT:       781G low_precision:       781G
-        CASE: 9683209690677    RESULT:      8.81T low_precision:       8.8T
-        CASE: 1073741824       RESULT:      1024M low_precision:      1024M
-        CASE: 1181116006       RESULT:      1.10G low_precision:       1.1G
-
-        :low_precision: returns less decimal places potentially (default is False)
-                        sacrificing precision for more readability.
-        :min_symbol: Do not approach if number < min_symbol (default is K)
-        :decimal_count: if set, force the number of decimal number (default is None)
-        """
-        if number is None:
-            return none_symbol
-        symbols = ('K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
-        if min_symbol in symbols:
-            symbols = symbols[symbols.index(min_symbol) :]
-        prefix = {
-            'Y': 1208925819614629174706176,
-            'Z': 1180591620717411303424,
-            'E': 1152921504606846976,
-            'P': 1125899906842624,
-            'T': 1099511627776,
-            'G': 1073741824,
-            'M': 1048576,
-            'K': 1024,
-        }
-
-        if number == 0:
-            # Avoid 0.0
-            return '0'
-
-        for symbol in reversed(symbols):
-            value = float(number) / prefix[symbol]
-            if value > 1:
-                decimal_precision = 0
-                if value < 10:
-                    decimal_precision = 2
-                elif value < 100:
-                    decimal_precision = 1
-                if low_precision:
-                    if symbol in 'MK':
-                        decimal_precision = 0
-                    else:
-                        decimal_precision = min(1, decimal_precision)
-                elif symbol in 'K':
-                    decimal_precision = 0
-                return '{:.{decimal}f}{symbol}'.format(value, decimal=decimal_precision, symbol=symbol)
-        return f'{number!s}'
+        """Return a nice human-readable string out of number."""
+        return auto_unit(number, low_precision=low_precision, min_symbol=min_symbol, none_symbol=none_symbol)
 
     def trend_msg(self, trend, significant=1):
         """Return the trend message.
@@ -1158,8 +1312,12 @@ class GlancesPluginModel:
             # 2) compute the _rate_per_sec
             # 3) set the original field to the delta between the current and the previous value
             for field in self.fields_description:
+                # Check if the field exist (avoid error on some OS where some fields are not available)
+                if field not in stat:
+                    continue
                 # For all the field with the rate=True flag
-                if 'rate' in self.fields_description[field] and self.fields_description[field]['rate'] is True:
+                # if 'rate' in self.fields_description[field] and self.fields_description[field]['rate'] is True:
+                if self.fields_description[field].get('rate', False):
                     # Create a new metadata with the gauge
                     stat['time_since_update'] = self.time_since_last_update
                     stat[field + '_gauge'] = stat[field]
@@ -1171,19 +1329,23 @@ class GlancesPluginModel:
                             stat[field + '_rate_per_sec'] = stat[field] // self.time_since_last_update
                         else:
                             stat[field] = 0
+                            stat[field + '_rate_per_sec'] = 0
                     else:
                         # Avoid strange rate at the first run
                         stat[field] = 0
+                        stat[field + '_rate_per_sec'] = 0
             return stat
 
         def compute_rate_on_list(self, stats, stats_previous):
             if stats_previous is None:
                 return stats
 
+            key = self.get_key()
+            previous_by_key = {s[key]: s for s in stats_previous}
             for stat in stats:
-                olds = [i for i in stats_previous if i[self.get_key()] == stat[self.get_key()]]
-                if len(olds) == 1:
-                    compute_rate(self, stat, olds[0])
+                old = previous_by_key.get(stat[key])
+                if old is not None:
+                    compute_rate(self, stat, old)
             return stats
 
         def wrapper(self, *args, **kw):
@@ -1208,7 +1370,30 @@ class GlancesPluginModel:
 
         return wrapper
 
+    def _manage_mmm(fct):
+        """Manage MMM (Min/Max/Mean) decorator for update method.
+
+        Automatically computes and adds min/max/mean fields for any field with mmm=True.
+        """
+
+        def wrapper(self, *args, **kw):
+            # Call the father method
+            stats = fct(self, *args, **kw)
+
+            # Update MMM fields
+            if isinstance(stats, dict):
+                # Stats is a dict
+                self._update_mmm_fields(stats)
+            elif isinstance(stats, list):
+                # Stats is a list
+                self._update_mmm_fields_on_list(stats)
+
+            return stats
+
+        return wrapper
+
     # Mandatory to call the decorator in child classes
     _check_decorator = staticmethod(_check_decorator)
     _log_result_decorator = staticmethod(_log_result_decorator)
     _manage_rate = staticmethod(_manage_rate)
+    _manage_mmm = staticmethod(_manage_mmm)

@@ -1,5 +1,5 @@
 <template>
-    <section class="plugin" id="irq">
+    <section id="irq" class="plugin">
         <table class="table table-sm table-borderless margin-bottom">
             <thead>
                 <tr>
@@ -19,23 +19,23 @@
 
 <script>
 export default {
-    props: {
-        data: {
-            type: Object
-        }
-    },
-    computed: {
-        stats() {
-            return this.data.stats['irq'];
-        },
-        irqs() {
-            return this.stats.map((IrqData) => {
-                return {
-                    irq_line: IrqData['irq_line'],
-                    irq_rate: IrqData['irq_rate']
-                };
-            });
-        }
-    }
+	props: {
+		data: {
+			type: Object,
+		},
+	},
+	computed: {
+		stats() {
+			return this.data.stats["irq"];
+		},
+		irqs() {
+			return this.stats.map((IrqData) => {
+				return {
+					irq_line: IrqData["irq_line"],
+					irq_rate: IrqData["irq_rate"],
+				};
+			});
+		},
+	},
 };
 </script>

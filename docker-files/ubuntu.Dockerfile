@@ -13,7 +13,7 @@ ARG PYTHON_VERSION=3.12
 
 ##############################################################################
 # Base layer to be used for building dependencies and the release images
-FROM ubuntu:${IMAGE_VERSION} as base
+FROM ubuntu:${IMAGE_VERSION} AS base
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
@@ -32,7 +32,7 @@ RUN apt-get update \
 # BUILD Stages
 ##############################################################################
 # BUILD: Base image shared by all build images
-FROM base as build
+FROM base AS build
 ARG PYTHON_VERSION
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -55,32 +55,29 @@ RUN apt-get clean \
 
 RUN python3 -m venv --without-pip venv
 
-COPY requirements.txt docker-requirements.txt webui-requirements.txt optional-requirements.txt ./
+COPY pyproject.toml docker-requirements.txt all-requirements.txt ./
 
 ##############################################################################
 # BUILD: Install the minimal image deps
-FROM build as buildMinimal
+FROM build AS buildminimal
 ARG PYTHON_VERSION
 
 RUN python3 -m pip install --target="/venv/lib/python${PYTHON_VERSION}/site-packages" \
-    -r requirements.txt \
-    -r docker-requirements.txt \
-    -r webui-requirements.txt
+    -r docker-requirements.txt
 
 ##############################################################################
 # BUILD: Install all the deps
-FROM build as buildFull
+FROM build AS buildfull
 ARG PYTHON_VERSION
 
 RUN python3 -m pip install --target="/venv/lib/python${PYTHON_VERSION}/site-packages" \
-    -r requirements.txt \
-    -r optional-requirements.txt
+    -r all-requirements.txt
 
 ##############################################################################
 # RELEASE Stages
 ##############################################################################
 # Base image shared by all releases
-FROM base as release
+FROM base AS release
 ARG PYTHON_VERSION
 
 # Copy Glances source code and config file
@@ -92,40 +89,50 @@ COPY docker-bin.sh /usr/local/bin/glances
 RUN chmod a+x /usr/local/bin/glances
 ENV PATH="/venv/bin:$PATH"
 
-# Copy binary and update PATH
-COPY docker-bin.sh /usr/local/bin/glances
-RUN chmod a+x /usr/local/bin/glances
-ENV PATH="/venv/bin:$PATH"
-
 # EXPOSE PORT (XMLRPC / WebUI)
 EXPOSE 61209 61208
 
+# Add glances user
+# NOTE: If used, the Glances Docker plugin do not work...
+# UID and GUID 1000 are already configured for the ubuntu user
+# Create anew one with UID and GUID 1001
+# RUN groupadd -g 1001 glances && \
+#     useradd -u 1001 -g glances glances && \
+#     chown -R glances:glances /app
+
 # Define default command.
 WORKDIR /app
-CMD /venv/bin/python3 -m glances $GLANCES_OPT
+ENV PYTHON_VERSION=${PYTHON_VERSION}
+CMD ["/bin/sh", "-c", "/venv/bin/python${PYTHON_VERSION} -m glances ${GLANCES_OPT}"]
 
 ################################################################################
 # RELEASE: minimal
-FROM release as minimal
+FROM release AS minimal
 ARG PYTHON_VERSION
 
 COPY --from=buildMinimal /venv /venv
 
+# USER glances
+
 ################################################################################
 # RELEASE: full
-FROM release as full
+FROM release AS full
 ARG PYTHON_VERSION
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libzmq5 \
+  && apt-get install -y --no-install-recommends \ 
+    libzmq5 \
+    libvirt-clients \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=buildFull /venv /venv
+COPY --from=buildfull /venv /venv
+
+# USER glances
 
 ################################################################################
 # RELEASE: dev - to be compatible with CI
-FROM full as dev
+FROM full AS dev
 ARG PYTHON_VERSION
 
 # Add the specific logger configuration file for Docker dev
@@ -133,5 +140,8 @@ ARG PYTHON_VERSION
 COPY ./docker-files/docker-logger.json /app
 ENV LOG_CFG=/app/docker-logger.json
 
+# USER glances
+
 WORKDIR /app
-CMD /venv/bin/python3 -m glances $GLANCES_OPT
+ENV PYTHON_VERSION=${PYTHON_VERSION}
+CMD ["/bin/sh", "-c", "/venv/bin/python${PYTHON_VERSION} -m glances ${GLANCES_OPT}"]

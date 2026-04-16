@@ -4,7 +4,7 @@ Forwarded: not-needed
 Last-Update: 2025-01-07
 --- a/docs/man/glances.1
 +++ b/docs/man/glances.1
-@@ -561,39 +561,24 @@
+@@ -582,39 +582,24 @@
  You can place your \fBglances.conf\fP file in the following locations:
  .TS
  box center;

@@ -11,7 +11,7 @@
 import socket
 import sys
 
-from glances.globals import BSD
+from glances.globals import get_ip_address
 from glances.logger import logger
 
 try:
@@ -187,16 +187,8 @@ class GlancesAutoDiscoverClient:
             except OSError as e:
                 logger.error(f"Cannot start zeroconf: {e}")
 
-            # XXX *BSDs: Segmentation fault (core dumped)
-            # -- https://bitbucket.org/al45tair/netifaces/issues/15
-            if not BSD:
-                try:
-                    # -B @ overwrite the dynamic IPv4 choice
-                    if zeroconf_bind_address == '0.0.0.0':
-                        zeroconf_bind_address = self.find_active_ip_address()
-                except KeyError:
-                    # Issue #528 (no network interface available)
-                    pass
+            if zeroconf_bind_address == '0.0.0.0':
+                zeroconf_bind_address = get_ip_address()[0]
 
             # Ensure zeroconf_bind_address is an IP address not an host
             zeroconf_bind_address = socket.gethostbyname(zeroconf_bind_address)
@@ -237,16 +229,6 @@ class GlancesAutoDiscoverClient:
                 print(f"Announce the Glances server on the LAN (using {zeroconf_bind_address} IP address)")
         else:
             logger.error("Cannot announce Glances server on the network: zeroconf library not found.")
-
-    @staticmethod
-    def find_active_ip_address():
-        """Try to find the active IP addresses."""
-        import netifaces
-
-        # Interface of the default gateway
-        gateway_itf = netifaces.gateways()[netifaces.AF_INET][0][1]
-        # IP address for the interface
-        return netifaces.ifaddresses(gateway_itf)[netifaces.AF_INET][0]['addr']
 
     def close(self):
         if zeroconf_tag:

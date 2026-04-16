@@ -23,9 +23,10 @@ Legend:
    header
    quicklook
    cpu
-   gpu
    memory
    load
+   gpu
+   npu
    network
    connections
    wifi
@@ -41,6 +42,7 @@ Legend:
    hddtemp
    ps
    containers
+   vms
    amps
    events
    actions

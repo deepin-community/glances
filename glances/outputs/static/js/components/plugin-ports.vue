@@ -1,5 +1,5 @@
 <template>
-    <section class="plugin" id="ports" v-if="hasPorts">
+    <section v-if="hasPorts" id="ports" class="plugin">
         <table class="table table-sm table-borderless margin-bottom">
             <tbody>
                 <tr v-for="(port, portId) in ports" :key="portId">
@@ -30,46 +30,46 @@
 
 <script>
 export default {
-    props: {
-        data: {
-            type: Object
-        }
-    },
-    computed: {
-        stats() {
-            return this.data.stats['ports'];
-        },
-        ports() {
-            return this.stats;
-        },
-        hasPorts() {
-            return this.ports.length > 0;
-        }
-    },
-    methods: {
-        getPortDecoration(port) {
-            if (port.status === null) {
-                return 'careful';
-            } else if (port.status === false) {
-                return 'critical';
-            } else if (port.rtt_warning !== null && port.status > port.rtt_warning) {
-                return 'warning';
-            }
-            return 'ok';
-        },
-        getWebDecoration(web) {
-            const okCodes = [200, 301, 302];
+	props: {
+		data: {
+			type: Object,
+		},
+	},
+	computed: {
+		stats() {
+			return this.data.stats["ports"];
+		},
+		ports() {
+			return this.stats;
+		},
+		hasPorts() {
+			return this.ports.length > 0;
+		},
+	},
+	methods: {
+		getPortDecoration(port) {
+			if (port.status === null) {
+				return "careful";
+			} else if (port.status === false) {
+				return "critical";
+			} else if (port.rtt_warning !== null && port.status > port.rtt_warning) {
+				return "warning";
+			}
+			return "ok";
+		},
+		getWebDecoration(web) {
+			const okCodes = [200, 301, 302];
 
-            if (web.status === null) {
-                return 'careful';
-            } else if (okCodes.indexOf(web.status) === -1) {
-                return 'critical';
-            } else if (web.rtt_warning !== null && web.elapsed > web.rtt_warning) {
-                return 'warning';
-            }
+			if (web.status === null) {
+				return "careful";
+			} else if (okCodes.indexOf(web.status) === -1) {
+				return "critical";
+			} else if (web.rtt_warning !== null && web.elapsed > web.rtt_warning) {
+				return "warning";
+			}
 
-            return 'ok';
-        }
-    }
+			return "ok";
+		},
+	},
 };
 </script>

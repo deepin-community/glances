@@ -1,4 +1,14 @@
 {
+    "topMenu": [
+        "quicklook",
+        "cpu",
+        "percpu",
+        "npu",
+        "gpu",
+        "mem",
+        "memswap",
+        "load"
+    ],
     "leftMenu": [
         "network",
         "ports",

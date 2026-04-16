@@ -17,6 +17,19 @@ import sys
 from glances.globals import BSD, LINUX, MACOS, SUNOS, WINDOWS, ConfigParser, NoOptionError, NoSectionError, system_exec
 from glances.logger import logger
 
+# Sections entirely blocked from the secure view
+_SECURE_BLOCKED_SECTIONS = frozenset(
+    {
+        "passwords",
+    }
+)
+
+# Key name patterns redacted in any section
+_SECURE_SENSITIVE_KEY_RE = re.compile(
+    r"password|token|secret|api_key|apikey|ssl_keyfile",
+    re.IGNORECASE,
+)
+
 
 def user_config_dir():
     r"""Return a list of per-user config dir (full path).
@@ -115,11 +128,12 @@ class Config:
     :type config_dir: str or None
     """
 
-    def __init__(self, config_dir=None):
+    def __init__(self, config_dir=None, disable_config_exec=False):
         self.config_dir = config_dir
         self.config_filename = 'glances.conf'
         self._loaded_config_file = None
         self._config_file_paths = self.config_file_paths()
+        self._disable_config_exec = disable_config_exec
 
         # Re pattern for optimize research of `foo`
         self.re_pattern = re.compile(r'(\`.+?\`)')
@@ -286,6 +300,22 @@ class Config:
                 dictionary[section][option] = self.parser.get(section, option)
         return dictionary
 
+    def as_dict_secure(self):
+        """Return a sanitised copy of the configuration dict.
+
+        Intended for unauthenticated API access.
+        - Blocked sections are omitted entirely.
+        - Sensitive keys in remaining sections are replaced by '********'.
+        """
+        sanitized = {}
+        for section, options in self.as_dict().items():
+            if section in _SECURE_BLOCKED_SECTIONS:
+                continue
+            sanitized[section] = {
+                key: "********" if _SECURE_SENSITIVE_KEY_RE.search(key) else value for key, value in options.items()
+            }
+        return sanitized
+
     def sections(self):
         """Return a list of all sections."""
         return self.parser.sections()
@@ -333,7 +363,12 @@ class Config:
             try:
                 match = self.re_pattern.findall(ret)
                 for m in match:
-                    ret = ret.replace(m, system_exec(m[1:-1]))
+                    command = m[1:-1]
+                    if self._disable_config_exec:
+                        logger.warning(f"Config exec disabled: skipping command `{command}` in [{section}] {option}")
+                    else:
+                        logger.warning(f"Executing config command `{command}` for [{section}] {option}")
+                        ret = ret.replace(m, system_exec(command))
             except TypeError:
                 pass
         return ret

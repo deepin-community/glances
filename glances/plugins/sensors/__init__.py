@@ -14,12 +14,12 @@ from typing import Any
 
 import psutil
 
-from glances.globals import to_fahrenheit
+from glances.globals import natural_keys, to_fahrenheit
 from glances.logger import logger
 from glances.outputs.glances_unicode import unicode_message
 from glances.plugins.plugin.model import GlancesPluginModel
-from glances.plugins.sensors.sensor.glances_batpercent import PluginModel as BatPercentPluginModel
-from glances.plugins.sensors.sensor.glances_hddtemp import PluginModel as HddTempPluginModel
+from glances.plugins.sensors.sensor.glances_batpercent import BatpercentPlugin
+from glances.plugins.sensors.sensor.glances_hddtemp import HddtempPlugin
 from glances.timer import Counter
 
 # Define all kind of sensors available in Glances
@@ -29,11 +29,6 @@ sensors_definition = {
     'hdd_temp': {'type': 'temperature_hdd', 'unit': 'C'},
     'battery': {'type': 'battery', 'unit': '%'},
 }
-
-# Define the default refresh multiplicator
-# Default value is 3 * Glances refresh time
-# Can be overwritten by the refresh option in the sensors section of the glances.conf file
-DEFAULT_REFRESH = 3
 
 # Fields description
 # description: human readable description
@@ -66,7 +61,7 @@ fields_description = {
 }
 
 
-class PluginModel(GlancesPluginModel):
+class SensorsPlugin(GlancesPluginModel):
     """Glances sensors plugin.
 
     The stats list includes both sensors and hard disks stats, if any.
@@ -90,12 +85,12 @@ class PluginModel(GlancesPluginModel):
 
         # Instance for the HDDTemp Plugin in order to display the hard disks temperatures
         start_duration.reset()
-        hddtemp_plugin = HddTempPluginModel(args=args, config=config)
+        hddtemp_plugin = HddtempPlugin(args=args, config=config)
         logger.debug(f"HDDTemp sensor plugin init duration: {start_duration.get()} seconds")
 
         # Instance for the BatPercent in order to display the batteries capacities
         start_duration.reset()
-        batpercent_plugin = BatPercentPluginModel(args=args, config=config)
+        batpercent_plugin = BatpercentPlugin(args=args, config=config)
         logger.debug(f"Battery sensor plugin init duration: {start_duration.get()} seconds")
 
         self.sensors_grab_map = {}
@@ -111,10 +106,6 @@ class PluginModel(GlancesPluginModel):
 
         # We want to display the stat in the curse interface
         self.display_curse = True
-
-        # Not necessary to refresh every refresh time
-        if args and self.get_refresh() == args.time:
-            self.set_refresh(self.get_refresh() * DEFAULT_REFRESH)
 
     def get_key(self):
         """Return the key of the list."""
@@ -144,7 +135,7 @@ class PluginModel(GlancesPluginModel):
         # Remove duplicates thanks to https://stackoverflow.com/a/9427216/1919431
         stats_transformed = [dict(t) for t in {tuple(d.items()) for d in stats_transformed}]
         # Sort by label
-        return sorted(stats_transformed, key=lambda d: d['label'])
+        return sorted(stats_transformed, key=lambda d: natural_keys(d['label']))
 
     @GlancesPluginModel._check_decorator
     @GlancesPluginModel._log_result_decorator
@@ -156,7 +147,7 @@ class PluginModel(GlancesPluginModel):
         if self.input_method == 'local':
             with ThreadPoolExecutor(max_workers=len(self.sensors_grab_map)) as executor:
                 logger.debug(f"Sensors enabled sub plugins: {list(self.sensors_grab_map.keys())}")
-                futures = {t: executor.submit(self.__get_sensor_data, t) for t in self.sensors_grab_map.keys()}
+                futures = {t: executor.submit(self.__get_sensor_data, t) for t in self.sensors_grab_map}
 
             # Merge the results
             for sensor_type, future in futures.items():
@@ -226,8 +217,8 @@ class PluginModel(GlancesPluginModel):
             # Alert processing
             if i['type'] == sensors_definition.get('cpu_temp').get('type'):
                 if self.is_limit('critical', stat_name=i['type'] + '_' + i['label']):
-                    # Get thresholds for the specific sensor in the glances.conf file (see #2058)
-                    alert = self.get_alert(current=i['value'], header=i['type'] + '_' + i['label'])
+                    # Get thresholds for the specific sensor in the glances.conf file (see #2058)abel']}")
+                    alert = self.get_alert(current=i['value'], header=i['type'], action_key=i['label'])
                 elif self.is_limit('critical', stat_name=i['type']):
                     # Get thresholds for the sensor type in the glances.conf file (see #3049)
                     alert = self.get_alert(current=i['value'], header=i['type'])

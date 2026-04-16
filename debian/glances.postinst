@@ -29,9 +29,21 @@ do_adduser () {
     fi
 }
 
+install_glances_completion() {
+    local completions_dir="/usr/share/bash-completion/completions"
+    local target="${completions_dir}/glances"
+
+    if command -v glances >/dev/null 2>&1; then
+        glances --print-completion bash > "$target"
+        chmod 644 "$target"
+    fi
+}
+
+
 case "$1" in
     configure)
         do_adduser
+	install_glances_completion
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

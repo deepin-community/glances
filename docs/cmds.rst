@@ -18,6 +18,10 @@ Command-Line Options
 
     enable debug mode
 
+.. option:: --print-completion
+
+    generate shell tab completion scripts for Glances CLI
+
 .. option:: -C CONF_FILE, --config CONF_FILE
 
     path to the configuration file
@@ -93,10 +97,6 @@ Command-Line Options
 .. option:: -6, --meangpu
 
     start Glances in mean GPU mode
-
-.. option:: --enable-history
-
-    enable the history mode
 
 .. option:: --disable-bold
 
@@ -174,6 +174,15 @@ Command-Line Options
 .. option:: -w, --webserver
 
     run Glances in web server mode (FastAPI lib needed)
+
+.. option:: --enable-mcp
+
+    enable the MCP (Model Context Protocol) server alongside the web server
+    (``mcp`` package needed, see :ref:`api_mcp`)
+
+.. option:: --mcp-path MCP_PATH
+
+    set the MCP server mount path [default: /mcp]
 
 .. option:: --cached-time CACHED_TIME
 
@@ -348,7 +357,7 @@ The following commands (key pressed) are supported while in Glances:
     Show/hide RAID plugin
 
 ``s``
-    Show/hide sensors stats
+    Show/hide sensors plugin
 
 ``S``
     Enable/disable spark lines
@@ -364,6 +373,9 @@ The following commands (key pressed) are supported while in Glances:
 
 ``U``
     View cumulative network I/O
+
+``V``
+    Show/hide VMS plugin
 
 ``w``
     Delete finished warning log messages
@@ -409,11 +421,17 @@ The following commands (key pressed) are supported while in Glances:
 ``F5`` or ``CTRL-R``
     Refresh user interface
 
-``LEFT``
+``SHIFT-LEFT``
     Navigation left through the process sort
 
-``RIGHT``
+``SHIFT-RIGHT``
     Navigation right through the process sort
+
+``LEFT``
+    Navigation left through the process name
+
+``RIGHT``
+    Navigation right through the process name
 
 ``UP``
     Up in the processes list

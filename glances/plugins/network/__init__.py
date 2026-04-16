@@ -62,7 +62,7 @@ items_history_list = [
 ]
 
 
-class PluginModel(GlancesPluginModel):
+class NetworkPlugin(GlancesPluginModel):
     """Glances network plugin.
 
     stats is a list
@@ -114,10 +114,15 @@ class PluginModel(GlancesPluginModel):
         """
         if self.input_method == 'local':
             stats = self.update_local()
+
+            # Update the stats
+            for stat in stats:
+                if stat.get('bytes_recv') is None:
+                    print(f"def update: bytes_recv is None for {stat['interface_name']}")
+
         else:
             stats = self.get_init_value()
 
-        # Update the stats
         self.stats = stats
 
         return self.stats
@@ -203,8 +208,10 @@ class PluginModel(GlancesPluginModel):
         # Add specifics information
         # Alert
         for i in self.get_raw():
+            if_real_name = i['interface_name'].split(':')[0]
+
             # Skip alert if no timespan to measure
-            if 'bytes_recv_rate_per_sec' not in i or 'bytes_sent_rate_per_sec' not in i:
+            if not i.get('bytes_recv_rate_per_sec') or not i.get('bytes_sent_rate_per_sec'):
                 continue
 
             # Convert rate to bps (to be able to compare to interface speed)
@@ -212,9 +219,8 @@ class PluginModel(GlancesPluginModel):
             bps_tx = int(i['bytes_sent_rate_per_sec'] * 8)
 
             # Decorate the bitrate with the configuration file thresholds
-            if_real_name = i['interface_name'].split(':')[0]
-            alert_rx = self.get_alert(bps_rx, header=if_real_name + '_rx')
-            alert_tx = self.get_alert(bps_tx, header=if_real_name + '_tx')
+            alert_rx = self.get_alert(bps_rx, header='rx', action_key=if_real_name)
+            alert_tx = self.get_alert(bps_tx, header='tx', action_key=if_real_name)
 
             # If nothing is define in the configuration file...
             # ... then use the interface speed (not available on all systems)
@@ -229,50 +235,86 @@ class PluginModel(GlancesPluginModel):
             self.views[i[self.get_key()]]['bytes_sent']['decoration'] = alert_tx
             self.views[i[self.get_key()]]['bytes_sent_rate_per_sec']['decoration'] = alert_rx
 
+    def _msg_curse_header(self, args, name_max_width):
+        """Return the header curse lines."""
+        ret = [self.curse_add_line('{:{width}}'.format('NETWORK', width=name_max_width), "TITLE")]
+        if args and args.network_cumul:
+            if args and args.network_sum:
+                ret.append(self.curse_add_line('{:>14}'.format('Rx+Tx')))
+            else:
+                ret.append(self.curse_add_line('{:>7}'.format('Rx')))
+                ret.append(self.curse_add_line('{:>7}'.format('Tx')))
+        else:
+            if args and args.network_sum:
+                ret.append(self.curse_add_line('{:>14}'.format('Rx+Tx/s')))
+            else:
+                ret.append(self.curse_add_line('{:>7}'.format('Rx/s')))
+                ret.append(self.curse_add_line('{:>7}'.format('Tx/s')))
+        return ret
+
+    def _get_if_name(self, i, name_max_width):
+        """Return the (possibly truncated) display name for an interface."""
+        if_name = i['alias'] if i['alias'] is not None else i['interface_name'].split(':')[0]
+        if len(if_name) > name_max_width:
+            # Cut interface name if it is too long
+            if_name = '_' + if_name[-name_max_width + 1 :]
+        return if_name
+
+    def _get_if_rates(self, i, args):
+        """Return (rx, tx, ax) formatted strings, or None if rates are unavailable.
+
+        Returns None when a new interface appears before its first rate measurement.
+        """
+        to_bit, unit = (1, '') if (args and args.byte) else (8, 'b')
+        if args and args.network_cumul:
+            if i.get('bytes_recv') is None or i.get('bytes_sent') is None:
+                return None
+            rx = self.auto_unit(int(i['bytes_recv'] * to_bit)) + unit
+            tx = self.auto_unit(int(i['bytes_sent'] * to_bit)) + unit
+            ax = self.auto_unit(int(i['bytes_all'] * to_bit)) + unit
+        else:
+            if i.get('bytes_recv_rate_per_sec') is None or i.get('bytes_sent_rate_per_sec') is None:
+                return None
+            rx = self.auto_unit(int(i['bytes_recv_rate_per_sec'] * to_bit)) + unit
+            tx = self.auto_unit(int(i['bytes_sent_rate_per_sec'] * to_bit)) + unit
+            ax = self.auto_unit(int(i['bytes_all_rate_per_sec'] * to_bit)) + unit
+        return rx, tx, ax
+
+    def _msg_curse_if_line(self, i, if_name, rx, tx, ax, args, name_max_width):
+        """Return curse lines for a single interface row."""
+        ret = [
+            self.curse_new_line(),
+            self.curse_add_line('{:{width}}'.format(if_name, width=name_max_width)),
+        ]
+        if args and args.network_sum:
+            ret.append(self.curse_add_line(f'{ax:>14}'))
+        else:
+            ret.append(
+                self.curse_add_line(
+                    f'{rx:>7}', self.get_views(item=i[self.get_key()], key='bytes_recv', option='decoration')
+                )
+            )
+            ret.append(
+                self.curse_add_line(
+                    f'{tx:>7}', self.get_views(item=i[self.get_key()], key='bytes_sent', option='decoration')
+                )
+            )
+        return ret
+
     def msg_curse(self, args=None, max_width=None):
         """Return the dict to display in the curse interface."""
-        # Init the return message
         ret = []
 
-        # Only process if stats exist and display plugin enable...
         if not self.stats or self.is_disabled():
             return ret
 
-        # Max size for the interface name
-        if max_width:
-            name_max_width = max_width - 12
-        else:
-            # No max_width defined, return an empty curse message
+        if not max_width:
             logger.debug(f"No max_width defined for the {self.plugin_name} plugin, it will not be displayed.")
             return ret
 
-        # Header
-        msg = '{:{width}}'.format('NETWORK', width=name_max_width)
-        ret.append(self.curse_add_line(msg, "TITLE"))
-        if args.network_cumul:
-            # Cumulative stats
-            if args.network_sum:
-                # Sum stats
-                msg = '{:>14}'.format('Rx+Tx')
-                ret.append(self.curse_add_line(msg))
-            else:
-                # Rx/Tx stats
-                msg = '{:>7}'.format('Rx')
-                ret.append(self.curse_add_line(msg))
-                msg = '{:>7}'.format('Tx')
-                ret.append(self.curse_add_line(msg))
-        else:
-            # Bitrate stats
-            if args.network_sum:
-                # Sum stats
-                msg = '{:>14}'.format('Rx+Tx/s')
-                ret.append(self.curse_add_line(msg))
-            else:
-                msg = '{:>7}'.format('Rx/s')
-                ret.append(self.curse_add_line(msg))
-                msg = '{:>7}'.format('Tx/s')
-                ret.append(self.curse_add_line(msg))
-        # Interface list (sorted by name)
+        name_max_width = max_width - 12
+        ret.extend(self._msg_curse_header(args, name_max_width))
+
         for i in self.sorted_stats():
             # Do not display interface in down state (issue #765)
             if ('is_up' in i) and (i['is_up'] is False):
@@ -280,57 +322,14 @@ class PluginModel(GlancesPluginModel):
             # Hide stats if never be different from 0 (issue #1787)
             if all(self.get_views(item=i[self.get_key()], key=f, option='hidden') for f in self.hide_zero_fields):
                 continue
-            # Format stats
-            # Is there an alias for the interface name ?
-            if i['alias'] is None:
-                if_name = i['interface_name'].split(':')[0]
-            else:
-                if_name = i['alias']
-            if len(if_name) > name_max_width:
-                # Cut interface name if it is too long
-                if_name = '_' + if_name[-name_max_width + 1 :]
 
-            if args.byte:
-                # Bytes per second (for dummy)
-                to_bit = 1
-                unit = ''
-            else:
-                # Bits per second (for real network administrator | Default)
-                to_bit = 8
-                unit = 'b'
-
-            if args.network_cumul and 'bytes_recv' in i and 'bytes_sent' in i:
-                rx = self.auto_unit(int(i['bytes_recv'] * to_bit)) + unit
-                tx = self.auto_unit(int(i['bytes_sent'] * to_bit)) + unit
-                ax = self.auto_unit(int(i['bytes_all'] * to_bit)) + unit
-            elif 'bytes_recv_rate_per_sec' in i and 'bytes_sent_rate_per_sec' in i:
-                rx = self.auto_unit(int(i['bytes_recv_rate_per_sec'] * to_bit)) + unit
-                tx = self.auto_unit(int(i['bytes_sent_rate_per_sec'] * to_bit)) + unit
-                ax = self.auto_unit(int(i['bytes_all_rate_per_sec'] * to_bit)) + unit
-            else:
+            rates = self._get_if_rates(i, args)
+            if rates is None:
                 # Avoid issue when a new interface is created on the fly
                 # Example: start Glances, then start a new container
                 continue
 
-            # New line
-            ret.append(self.curse_new_line())
-            msg = '{:{width}}'.format(if_name, width=name_max_width)
-            ret.append(self.curse_add_line(msg))
-            if args.network_sum:
-                msg = f'{ax:>14}'
-                ret.append(self.curse_add_line(msg))
-            else:
-                msg = f'{rx:>7}'
-                ret.append(
-                    self.curse_add_line(
-                        msg, self.get_views(item=i[self.get_key()], key='bytes_recv', option='decoration')
-                    )
-                )
-                msg = f'{tx:>7}'
-                ret.append(
-                    self.curse_add_line(
-                        msg, self.get_views(item=i[self.get_key()], key='bytes_sent', option='decoration')
-                    )
-                )
+            if_name = self._get_if_name(i, name_max_width)
+            ret.extend(self._msg_curse_if_line(i, if_name, *rates, args, name_max_width))
 
         return ret

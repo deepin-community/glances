@@ -11,64 +11,70 @@
 import psutil
 
 from glances.cpu_percent import cpu_percent
-from glances.globals import LINUX, SUNOS, WINDOWS, iterkeys
-from glances.plugins.core import PluginModel as CorePluginModel
+from glances.globals import LINUX, MACOS
+from glances.plugins.core import CorePlugin
 from glances.plugins.plugin.model import GlancesPluginModel
 
 # Fields description
-# description: human readable description
-# short_name: shortname to use un UI
-# unit: unit type
-# rate: if True then compute and add *_gauge and *_rate_per_is fields
-# min_symbol: Auto unit should be used if value > than 1 'X' (K, M, G)...
+# https://github.com/nicolargo/glances/wiki/How-to-create-a-new-plugin-%3F#create-the-plugin-script
 fields_description = {
-    'total': {'description': 'Sum of all CPU percentages (except idle).', 'unit': 'percent'},
+    'total': {'description': 'Sum of all CPU percentages (except idle).', 'unit': 'percent', 'log': True, 'mmm': True},
     'system': {
         'description': 'Percent time spent in kernel space. System CPU time is the \
 time spent running code in the Operating System kernel.',
         'unit': 'percent',
+        'log': True,
     },
     'user': {
         'description': 'CPU percent time spent in user space. \
 User CPU time is the time spent on the processor running your program\'s code (or code in libraries).',
         'unit': 'percent',
+        'log': True,
     },
     'iowait': {
         'description': '*(Linux)*: percent time spent by the CPU waiting for I/O \
 operations to complete.',
         'unit': 'percent',
+        'log': True,
     },
     'dpc': {
         'description': '*(Windows)*: time spent servicing deferred procedure calls (DPCs)',
         'unit': 'percent',
+        'log': True,
     },
     'idle': {
         'description': 'percent of CPU used by any program. Every program or task \
 that runs on a computer system occupies a certain amount of processing \
 time on the CPU. If the CPU has completed all tasks it is idle.',
         'unit': 'percent',
+        'optional': True,
     },
     'irq': {
         'description': '*(Linux and BSD)*: percent time spent servicing/handling \
 hardware/software interrupts. Time servicing interrupts (hardware + \
 software).',
         'unit': 'percent',
+        'optional': True,
     },
     'nice': {
         'description': '*(Unix)*: percent time occupied by user level processes with \
 a positive nice value. The time the CPU has spent running users\' \
 processes that have been *niced*.',
         'unit': 'percent',
+        'optional': True,
     },
     'steal': {
         'description': '*(Linux)*: percentage of time a virtual CPU waits for a real \
 CPU while the hypervisor is servicing another virtual processor.',
         'unit': 'percent',
+        'alert': True,
+        'optional': True,
     },
     'guest': {
         'description': '*(Linux)*: time spent running a virtual CPU for guest operating \
 systems under the control of the Linux kernel.',
         'unit': 'percent',
+        'optional': True,
     },
     'ctx_switches': {
         'description': 'number of context switches (voluntary + involuntary) per \
@@ -79,13 +85,16 @@ another while ensuring that the tasks do not conflict.',
         'rate': True,
         'min_symbol': 'K',
         'short_name': 'ctx_sw',
+        'optional': True,
     },
+    # In PsUtil 8+ the 'interrupt' field is renamed to 'irq' - See #3472
     'interrupts': {
         'description': 'number of interrupts per second.',
         'unit': 'number',
         'rate': True,
         'min_symbol': 'K',
         'short_name': 'inter',
+        'optional': True,
     },
     'soft_interrupts': {
         'description': 'number of software interrupts per second. Always set to \
@@ -94,6 +103,7 @@ another while ensuring that the tasks do not conflict.',
         'rate': True,
         'min_symbol': 'K',
         'short_name': 'sw_int',
+        'optional': True,
     },
     'syscalls': {
         'description': 'number of system calls per second. Always 0 on Linux OS.',
@@ -101,6 +111,7 @@ another while ensuring that the tasks do not conflict.',
         'rate': True,
         'min_symbol': 'K',
         'short_name': 'sys_call',
+        'optional': True,
     },
     'cpucore': {'description': 'Total number of CPU core.', 'unit': 'number'},
     'time_since_update': {'description': 'Number of seconds since last update.', 'unit': 'seconds'},
@@ -134,7 +145,7 @@ items_history_list = [
 ]
 
 
-class PluginModel(GlancesPluginModel):
+class CpuPlugin(GlancesPluginModel):
     """Glances CPU plugin.
 
     'stats' is a dictionary that contains the system-wide CPU utilization as a
@@ -150,9 +161,9 @@ class PluginModel(GlancesPluginModel):
         # We want to display the stat in the curse interface
         self.display_curse = True
 
-        # Call CorePluginModel in order to display the core number
+        # Call CorePlugin in order to display the core number
         try:
-            self.nb_log_core = CorePluginModel(args=self.args).update()["log"]
+            self.nb_log_core = CorePlugin(args=self.args).update()["log"]
         except Exception:
             self.nb_log_core = 1
 
@@ -261,7 +272,7 @@ class PluginModel(GlancesPluginModel):
                 return self.stats
 
             # Convert SNMP stats to float
-            for key in iterkeys(stats):
+            for key in stats:
                 stats[key] = float(stats[key])
             stats['total'] = 100 - stats['idle']
 
@@ -273,15 +284,6 @@ class PluginModel(GlancesPluginModel):
         super().update_views()
 
         # Add specifics information
-        # Alert and log
-        for key in ['user', 'system', 'iowait', 'dpc', 'total']:
-            if key in self.stats:
-                self.views[key]['decoration'] = self.get_alert_log(self.stats[key], header=key)
-        # Alert only
-        for key in ['steal']:
-            if key in self.stats:
-                self.views[key]['decoration'] = self.get_alert(self.stats[key], header=key)
-        # Alert only but depend on Core number
         for key in ['ctx_switches']:
             # Skip alert if no timespan to measure
             if self.stats.get('time_since_update', 0) == 0:
@@ -290,20 +292,6 @@ class PluginModel(GlancesPluginModel):
                 self.views[key]['decoration'] = self.get_alert(
                     self.stats[key], maximum=100 * self.stats['cpucore'], header=key
                 )
-        # Optional
-        for key in [
-            'nice',
-            'irq',
-            'idle',
-            'steal',
-            'guest',
-            'ctx_switches',
-            'interrupts',
-            'soft_interrupts',
-            'syscalls',
-        ]:
-            if key in self.stats:
-                self.views[key]['optional'] = True
 
     def msg_curse(self, args=None, max_width=None):
         """Return the list to display in the UI."""
@@ -318,39 +306,38 @@ class PluginModel(GlancesPluginModel):
         idle_tag = 'user' not in self.stats
 
         # First line
-        # Total + (idle) + ctx_sw
+        # Total + (idle) + (ctx_sw)
         msg = '{:8}'.format('CPU')
         ret.append(self.curse_add_line(msg, "TITLE"))
         # Total CPU usage
         msg = '{:5.1f}%'.format(self.stats['total'])
         ret.append(self.curse_add_line(msg, self.get_views(key='total', option='decoration')))
-        # Idle CPU
+        # Idle CPU (if available and not idle_tag)
         if 'idle' in self.stats and not idle_tag:
             msg = '  {:8}'.format('idle')
             ret.append(self.curse_add_line(msg, optional=self.get_views(key='idle', option='optional')))
             msg = '{:4.1f}%'.format(self.stats['idle'])
             ret.append(self.curse_add_line(msg, optional=self.get_views(key='idle', option='optional')))
-        # ctx_switches
-        # On WINDOWS/SUNOS the ctx_switches is displayed in the third line
-        if not WINDOWS and not SUNOS:
-            ret.extend(self.curse_add_stat('ctx_switches', width=15, header='  '))
+        # ctx_switches (if available)
+        ret.extend(self.curse_add_stat('ctx_switches', width=15, header='  '))
 
         # Second line
-        # user|idle + irq + interrupts
         ret.append(self.curse_new_line())
+        # user|idle + irq + interrupts
         # User CPU
         if not idle_tag:
             ret.extend(self.curse_add_stat('user', width=15))
-        elif 'idle' in self.stats:
+        else:
             ret.extend(self.curse_add_stat('idle', width=15))
         # IRQ CPU
         ret.extend(self.curse_add_stat('irq', width=14, header='  '))
         # interrupts
+        # In PsUtil 8+ the 'interrupt' field is renamed to 'irq' - See #3472
         ret.extend(self.curse_add_stat('interrupts', width=15, header='  '))
 
         # Third line
-        # system|core + nice + sw_int
         ret.append(self.curse_new_line())
+        # system|core + nice + sw_int
         # System CPU
         if not idle_tag:
             ret.extend(self.curse_add_stat('system', width=15))
@@ -359,29 +346,29 @@ class PluginModel(GlancesPluginModel):
         # Nice CPU
         ret.extend(self.curse_add_stat('nice', width=14, header='  '))
         # soft_interrupts
-        if not WINDOWS and not SUNOS:
+        if 'soft_interrupts' in self.stats:
             ret.extend(self.curse_add_stat('soft_interrupts', width=15, header='  '))
         else:
             ret.extend(self.curse_add_stat('ctx_switches', width=15, header='  '))
 
         # Fourth line
-        # iowait + steal + (syscalls or guest)
         ret.append(self.curse_new_line())
+        # iowait + steal + (syscalls or guest)
         if 'iowait' in self.stats:
             # IOWait CPU
             ret.extend(self.curse_add_stat('iowait', width=15))
-        elif 'dpc' in self.stats:
+        else:
             # DPC CPU
             ret.extend(self.curse_add_stat('dpc', width=15))
         # Steal CPU usage
         ret.extend(self.curse_add_stat('steal', width=14, header='  '))
-        if not LINUX:
-            # syscalls: number of system calls since boot. Always set to 0 on Linux. (do not display)
-            ret.extend(self.curse_add_stat('syscalls', width=15, header='  '))
-        else:
-            # So instead on Linux we display the guest CPU usage (see #2667)
+        if 'guest' in self.stats:
+            # On Linux we display the guest CPU usage (see #2667)
             # guest: time spent running a virtual CPU for guest operating systems under
             ret.extend(self.curse_add_stat('guest', width=14, header='  '))
+        elif not LINUX or not MACOS:
+            # syscalls: number of system calls since boot. Always set to 0 on Linux. (do not display)
+            ret.extend(self.curse_add_stat('syscalls', width=15, header='  '))
 
         # Return the message with decoration
         return ret

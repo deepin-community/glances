@@ -7,4 +7,8 @@ set -e
 if [ "$1" = "purge" ] ; then
     deluser --quiet --system glances > /dev/null || true
     delgroup --quiet --system glances > /dev/null || true
+    completion_file="/usr/share/bash-completion/completions/glances"
+    if [ -f "$completion_file" ]; then
+        rm -f "$completion_file"
+    fi
 fi

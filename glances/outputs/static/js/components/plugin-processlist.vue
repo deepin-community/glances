@@ -1,17 +1,17 @@
 <template>
 
     <!-- Display processes -->
-    <section class="plugin" id="processlist" v-if="!args.programs">
-        <div class="extendedstats" v-if="extended_stats !== null">
+    <section v-if="!args.programs" id="processlist" class="plugin">
+        <div v-if="extended_stats !== null" class="extendedstats">
             <div>
-                <span class="title">Pinned thread: </span>
+                <span class="title">Pinned task: </span>
                 <span>{{ $filters.limitTo(extended_stats.cmdline, 80) }}</span>
-                <span><button class="button" v-on:click="disableExtendedStats()">Upin</button></span>
+                <span><button class="button" @click="disableExtendedStats()">Unpin</button></span>
             </div>
             <div>
                 <span>CPU Min/Max/Mean: </span>
                 <span class="careful">{{ $filters.number(extended_stats.cpu_min, 1)
-                    }}% / {{
+                }}% / {{
                         $filters.number(extended_stats.cpu_max, 1) }}% / {{ $filters.number(extended_stats.cpu_mean, 1)
                     }}%</span>
                 <span>Affinity: </span>
@@ -29,54 +29,58 @@
                 </span>
             </div>
         </div>
-        <div class="table-responsive d-lg-none">
+        <div v-show="is_focus">Focus on following processes: {{ focus.join(', ') }}</div>
+        <div class="table-responsive d-lg-none" id="processlist-table">
             <table class="table table-sm table-borderless table-striped table-hover">
                 <thead>
                     <tr>
-                        <td scope="col" :class="['sortable', sorter.column === 'cpu_percent' && 'sort']"
-                            @click="$emit('update:sorter', 'cpu_percent')"
-                            v-show="!getDisableStats().includes('cpu_percent')">
-                            CPU%
+                        <td v-show="!getDisableStats().includes('cpu_percent')" scope="col"
+                            :class="['sortable', sorter.column === 'cpu_percent' && 'sort']"
+                            @click="$emit('update:sorter', 'cpu_percent')">
+                            <span v-show="!args.disable_irix">CPU%</span>
+                            <span v-show="args.disable_irix">CPUi</span>
                         </td>
-                        <td scope="col" :class="['sortable', sorter.column === 'memory_percent' && 'sort']"
-                            @click="$emit('update:sorter', 'memory_percent')"
-                            v-show="!getDisableStats().includes('memory_percent')">
+                        <td v-show="!getDisableStats().includes('memory_percent')" scope="col"
+                            :class="['sortable', sorter.column === 'memory_percent' && 'sort']"
+                            @click="$emit('update:sorter', 'memory_percent')">
                             MEM%
                         </td>
-                        <td scope="col" v-show="!getDisableStats().includes('pid')">
+                        <td v-show="!getDisableStats().includes('pid')" scope="col">
                             PID
                         </td>
-                        <td scope="col" :class="['sortable', sorter.column === 'username' && 'sort']"
-                            @click="$emit('update:sorter', 'username')"
-                            v-show="!getDisableStats().includes('username')">
+                        <td v-show="!getDisableStats().includes('username')" scope="col"
+                            :class="['sortable', sorter.column === 'username' && 'sort']"
+                            @click="$emit('update:sorter', 'username')">
                             USER
                         </td>
-                        <td scope="col" :class="['sortable', sorter.column === 'name' && 'sort']"
-                            @click="$emit('update:sorter', 'name')" v-show="!getDisableStats().includes('cmdline')">
+                        <td v-show="!getDisableStats().includes('cmdline')" scope="col"
+                            :class="['sortable', sorter.column === 'name' && 'sort']"
+                            @click="$emit('update:sorter', 'name')">
                             Command (click to pin)
                         </td>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="(process, processId) in processes" :key="processId" @click="setExtendedStats(process)"
-                        style="cursor: pointer">
-                        <td scope="row" :class="getCpuPercentAlert(process)"
-                            v-show="!getDisableStats().includes('cpu_percent')">
-                            {{ process.cpu_percent == -1 ? '?' : $filters.number(process.cpu_percent, 1) }}
+                    <tr v-for="(process, processId) in processes" :key="processId" style="cursor: pointer"
+                        @click="setExtendedStats(process)">
+                        <td v-show="!getDisableStats().includes('cpu_percent')" scope="row"
+                            :class="getCpuPercentAlert(process)">
+                            {{ process.cpu_percent == -1 ? '?' : $filters.number(process.cpu_percent / process.irix, 1)
+                            }}
                         </td>
-                        <td scope="row" :class="getMemoryPercentAlert(process)"
-                            v-show="!getDisableStats().includes('memory_percent')">
+                        <td v-show="!getDisableStats().includes('memory_percent')" scope="row"
+                            :class="getMemoryPercentAlert(process)">
                             {{ process.memory_percent == -1 ? '?' : $filters.number(process.memory_percent, 1) }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('pid')">
+                        <td v-show="!getDisableStats().includes('pid')" scope="row">
                             {{ process.pid }}
                         </td>
-                        <td scope="row" class="text-truncate"
-                            v-show="args.process_short_name && !getDisableStats().includes('cmdline')">
+                        <td v-show="args.process_short_name && !getDisableStats().includes('cmdline')" scope="row"
+                            class="text-truncate">
                             {{ process.name }}
                         </td>
-                        <td scope="row" class="text-truncate"
-                            v-show="!args.process_short_name && !getDisableStats().includes('cmdline')">
+                        <td v-show="!args.process_short_name && !getDisableStats().includes('cmdline')" scope="row"
+                            class="text-truncate">
                             {{ process.cmdline }}
                         </td>
                     </tr>
@@ -87,112 +91,123 @@
             <table class="table table-sm table-borderless table-striped table-hover">
                 <thead>
                     <tr>
-                        <td scope="col" :class="['sortable', sorter.column === 'cpu_percent' && 'sort']"
-                            @click="$emit('update:sorter', 'cpu_percent')"
-                            v-show="!getDisableStats().includes('cpu_percent')">
-                            CPU%
+                        <td v-show="!getDisableStats().includes('cpu_percent')" scope="col"
+                            :class="['sortable', sorter.column === 'cpu_percent' && 'sort']"
+                            @click="$emit('update:sorter', 'cpu_percent')">
+                            <span v-show="!args.disable_irix">CPU%</span>
+                            <span v-show="args.disable_irix">CPUi</span>
                         </td>
-                        <td scope="col" :class="['sortable', sorter.column === 'memory_percent' && 'sort']"
-                            @click="$emit('update:sorter', 'memory_percent')"
-                            v-show="!getDisableStats().includes('memory_percent')">
+                        <td v-show="!getDisableStats().includes('memory_percent')" scope="col"
+                            :class="['sortable', sorter.column === 'memory_percent' && 'sort']"
+                            @click="$emit('update:sorter', 'memory_percent')">
                             MEM%
                         </td>
-                        <td scope="col" v-show="!getDisableStats().includes('memory_info')">
+                        <td v-show="!getDisableStats().includes('memory_info') && !getDisableVms()" scope="col">
                             VIRT
                         </td>
-                        <td scope="col" v-show="!getDisableStats().includes('memory_info')">
+                        <td v-show="!getDisableStats().includes('memory_info')" scope="col">
                             RES
                         </td>
-                        <td scope="col" v-show="!getDisableStats().includes('pid')">
+                        <td v-show="!getDisableStats().includes('pid')" scope="col">
                             PID
                         </td>
-                        <td scope="col" :class="['sortable', sorter.column === 'username' && 'sort']"
-                            @click="$emit('update:sorter', 'username')"
-                            v-show="!getDisableStats().includes('username')">
+                        <td v-show="!getDisableStats().includes('username')" scope="col"
+                            :class="['sortable', sorter.column === 'username' && 'sort']"
+                            @click="$emit('update:sorter', 'username')">
                             USER
                         </td>
-                        <td scope="col" :class="['sortable', sorter.column === 'timemillis' && 'sort']"
-                            @click="$emit('update:sorter', 'timemillis')"
-                            v-show="!getDisableStats().includes('cpu_times')">
+                        <td v-show="!getDisableStats().includes('cpu_times')" scope="col"
+                            :class="['sortable', sorter.column === 'timemillis' && 'sort']"
+                            @click="$emit('update:sorter', 'timemillis')">
                             TIME+
                         </td>
-                        <td scope="col" :class="['sortable', sorter.column === 'num_threads' && 'sort']"
-                            @click="$emit('update:sorter', 'num_threads')"
-                            v-show="!getDisableStats().includes('num_threads')">
+                        <td v-show="!getDisableStats().includes('num_threads')" scope="col"
+                            :class="['sortable', sorter.column === 'num_threads' && 'sort']"
+                            @click="$emit('update:sorter', 'num_threads')">
                             THR
                         </td>
-                        <td scope="col" v-show="!getDisableStats().includes('nice')">NI</td>
-                        <td scope="col" v-show="!getDisableStats().includes('status')">S
+                        <td v-show="!getDisableStats().includes('nice')" scope="col">NI</td>
+                        <td v-show="!getDisableStats().includes('status')" scope="col">S
                         </td>
-                        <td scope="col" class="" :class="['sortable', sorter.column === 'io_counters' && 'sort']"
-                            v-show="ioReadWritePresentProcesses && !getDisableStats().includes('io_counters')"
+                        <td v-show="ioReadWritePresentProcesses && !getDisableStats().includes('io_counters')"
+                            scope="col" class="" :class="['sortable', sorter.column === 'io_counters' && 'sort']"
                             @click="$emit('update:sorter', 'io_counters')">
                             IORps
                         </td>
-                        <td scope="col" class="text-start"
+                        <td v-show="ioReadWritePresentProcesses && !getDisableStats().includes('io_counters')"
+                            scope="col" class="text-start"
                             :class="['sortable', sorter.column === 'io_counters' && 'sort']"
-                            v-show="ioReadWritePresentProcesses && !getDisableStats().includes('io_counters')"
                             @click="$emit('update:sorter', 'io_counters')">
                             IOWps
                         </td>
-                        <td scope="col" :class="['sortable', sorter.column === 'name' && 'sort']"
-                            @click="$emit('update:sorter', 'name')" v-show="!getDisableStats().includes('cmdline')">
+                        <td v-show="!getDisableStats().includes('cpu_num')" scope="col"
+                            :class="['sortable', sorter.column === 'cpu_num' && 'sort']"
+                            @click="$emit('update:sorter', 'cpu_num')">
+                            CPU
+                        </td>
+                        <td v-show="!getDisableStats().includes('cmdline')" scope="col"
+                            :class="['sortable', sorter.column === 'name' && 'sort']"
+                            @click="$emit('update:sorter', 'name')">
                             Command (click to pin)
                         </td>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="(process, processId) in processes" :key="processId"
-                        @click="setExtendedStats(process.pid)" style="cursor: pointer">
-                        <td scope="row" :class="getCpuPercentAlert(process)"
-                            v-show="!getDisableStats().includes('cpu_percent')">
-                            {{ process.cpu_percent == -1 ? '?' : $filters.number(process.cpu_percent, 1) }}
+                    <tr v-for="(process, processId) in processes" :key="processId" style="cursor: pointer"
+                        @click="setExtendedStats(process.pid)">
+                        <td v-show="!getDisableStats().includes('cpu_percent')" scope="row"
+                            :class="getCpuPercentAlert(process)">
+                            {{ process.cpu_percent == -1 ? '?' : $filters.number(process.cpu_percent / process.irix, 1)
+                            }}
                         </td>
-                        <td scope="row" :class="getMemoryPercentAlert(process)"
-                            v-show="!getDisableStats().includes('memory_percent')">
+                        <td v-show="!getDisableStats().includes('memory_percent')" scope="row"
+                            :class="getMemoryPercentAlert(process)">
                             {{ process.memory_percent == -1 ? '?' : $filters.number(process.memory_percent, 1) }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('memory_info')">
+                        <td v-show="!getDisableStats().includes('memory_info') && !getDisableVms()" scope="row">
                             {{ $filters.bytes(process.memvirt) }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('memory_info')">
+                        <td v-show="!getDisableStats().includes('memory_info')" scope="row">
                             {{ $filters.bytes(process.memres) }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('pid')">
+                        <td v-show="!getDisableStats().includes('pid')" scope="row">
                             {{ process.pid }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('username')">
+                        <td v-show="!getDisableStats().includes('username')" scope="row">
                             {{ process.username }}
                         </td>
-                        <td scope="row" class="" v-show="!getDisableStats().includes('cpu_times')">
+                        <td v-show="!getDisableStats().includes('cpu_times')" scope="row" class="">
                             {{ process.timeforhuman }}
                         </td>
-                        <td scope="row" class="" v-if="process.timeplus == '?'"
-                            v-show="!getDisableStats().includes('cpu_times')">?</td>
-                        <td scope="row" class="" v-show="!getDisableStats().includes('num_threads')">
+                        <td v-if="process.timeplus == '?'" v-show="!getDisableStats().includes('cpu_times')" scope="row"
+                            class="">?</td>
+                        <td v-show="!getDisableStats().includes('num_threads')" scope="row" class="">
                             {{ process.num_threads == -1 ? '?' : process.num_threads }}
                         </td>
-                        <td scope="row" :class="{ nice: process.isNice }" v-show="!getDisableStats().includes('nice')">
+                        <td v-show="!getDisableStats().includes('nice')" scope="row" :class="{ nice: process.isNice }">
                             {{ $filters.exclamation(process.nice) }}
                         </td>
-                        <td scope="row" :class="{ status: process.status == 'R' }"
-                            v-show="!getDisableStats().includes('status')">
+                        <td v-show="!getDisableStats().includes('status')" scope="row"
+                            :class="{ status: process.status == 'R' }">
                             {{ process.status }}
                         </td>
-                        <td scope="row" class=""
-                            v-show="ioReadWritePresentProcesses && !getDisableStats().includes('io_counters')">
+                        <td v-show="ioReadWritePresentProcesses && !getDisableStats().includes('io_counters')"
+                            scope="row" class="">
                             {{ $filters.bytes(process.io_read) }}
                         </td>
-                        <td scope="row" class="text-start"
-                            v-show="ioReadWritePresentProcesses && !getDisableStats().includes('io_counters')">
+                        <td v-show="ioReadWritePresentProcesses && !getDisableStats().includes('io_counters')"
+                            scope="row" class="text-start">
                             {{ $filters.bytes(process.io_write) }}
                         </td>
-                        <td scope="row" class="text-truncate"
-                            v-show="args.process_short_name && !getDisableStats().includes('cmdline')">
+                        <td v-show="!getDisableStats().includes('cpu_num')" scope="row">
+                            {{ process.cpu_num == null || process.cpu_num < 0 ? '-' : process.cpu_num }}
+                        </td>
+                        <td v-show="args.process_short_name && !getDisableStats().includes('cmdline')" scope="row"
+                            class="text-truncate">
                             {{ process.name }}
                         </td>
-                        <td scope="row" class="text-truncate"
-                            v-show="!args.process_short_name && !getDisableStats().includes('cmdline')">
+                        <td v-show="!args.process_short_name && !getDisableStats().includes('cmdline')" scope="row"
+                            class="text-truncate">
                             {{ process.cmdline }}
                         </td>
                     </tr>
@@ -203,48 +218,51 @@
 
 
     <!-- Display programs -->
-    <section class="plugin" id="processlist" v-if="args.programs">
+    <section v-if="args.programs" id="processlist" class="plugin">
         <div class="table-responsive d-lg-none">
             <table class="table table-sm table-borderless table-striped table-hover">
                 <thead>
                     <tr>
-                        <td :class="['sortable', sorter.column === 'cpu_percent' && 'sort']"
-                            @click="$emit('update:sorter', 'cpu_percent')"
-                            v-show="!getDisableStats().includes('cpu_percent')">
-                            CPU%
+                        <td v-show="!getDisableStats().includes('cpu_percent')"
+                            :class="['sortable', sorter.column === 'cpu_percent' && 'sort']"
+                            @click="$emit('update:sorter', 'cpu_percent')">
+                            <span v-show="!args.disable_irix">CPU%</span>
+                            <span v-show="args.disable_irix">CPUi</span>
                         </td>
-                        <td :class="['sortable', sorter.column === 'memory_percent' && 'sort']"
-                            @click="$emit('update:sorter', 'memory_percent')"
-                            v-show="!getDisableStats().includes('memory_percent')">
+                        <td v-show="!getDisableStats().includes('memory_percent')"
+                            :class="['sortable', sorter.column === 'memory_percent' && 'sort']"
+                            @click="$emit('update:sorter', 'memory_percent')">
                             MEM%
                         </td>
                         <td v-show="!getDisableStats().includes('nprocs')">
                             NPROCS
                         </td>
-                        <td scope="row" :class="['sortable', sorter.column === 'name' && 'sort']"
-                            @click="$emit('update:sorter', 'name')" v-show="!getDisableStats().includes('cmdline')">
+                        <td v-show="!getDisableStats().includes('cmdline')" scope="row"
+                            :class="['sortable', sorter.column === 'name' && 'sort']"
+                            @click="$emit('update:sorter', 'name')">
                             Command (click to pin)
                         </td>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-for="(process, processId) in programs" :key="processId">
-                        <td scope="row" :class="getCpuPercentAlert(process)"
-                            v-show="!getDisableStats().includes('cpu_percent')">
-                            {{ process.cpu_percent == -1 ? '?' : $filters.number(process.cpu_percent, 1) }}
+                        <td v-show="!getDisableStats().includes('cpu_percent')" scope="row"
+                            :class="getCpuPercentAlert(process)">
+                            {{ process.cpu_percent == -1 ? '?' : $filters.number(process.cpu_percent / process.irix, 1)
+                            }}
                         </td>
-                        <td scope="row" :class="getMemoryPercentAlert(process)"
-                            v-show="!getDisableStats().includes('memory_percent')">
+                        <td v-show="!getDisableStats().includes('memory_percent')" scope="row"
+                            :class="getMemoryPercentAlert(process)">
                             {{ process.memory_percent == -1 ? '?' : $filters.number(process.memory_percent, 1) }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('nprocs')">
+                        <td v-show="!getDisableStats().includes('nprocs')" scope="row">
                             {{ process.nprocs }}
                         </td>
-                        <td scope="row" class="text-truncate"
-                            v-show="args.process_short_name && !getDisableStats().includes('cmdline')">
+                        <td v-show="args.process_short_name && !getDisableStats().includes('cmdline')" scope="row"
+                            class="text-truncate">
                             {{ process.name }}
                         </td>
-                        <td scope="row" v-show="!args.process_short_name && !getDisableStats().includes('cmdline')">
+                        <td v-show="!args.process_short_name && !getDisableStats().includes('cmdline')" scope="row">
                             {{ process.cmdline }}
                         </td>
                     </tr>
@@ -255,108 +273,119 @@
             <table class="table table-sm table-borderless table-striped table-hover">
                 <thead>
                     <tr>
-                        <td :class="['sortable', sorter.column === 'cpu_percent' && 'sort']"
-                            @click="$emit('update:sorter', 'cpu_percent')"
-                            v-show="!getDisableStats().includes('cpu_percent')">
-                            CPU%
+                        <td v-show="!getDisableStats().includes('cpu_percent')"
+                            :class="['sortable', sorter.column === 'cpu_percent' && 'sort']"
+                            @click="$emit('update:sorter', 'cpu_percent')">
+                            <span v-show="!args.disable_irix">CPU%</span>
+                            <span v-show="args.disable_irix">CPUi</span>
                         </td>
-                        <td :class="['sortable', sorter.column === 'memory_percent' && 'sort']"
-                            @click="$emit('update:sorter', 'memory_percent')"
-                            v-show="!getDisableStats().includes('memory_percent')">
+                        <td v-show="!getDisableStats().includes('memory_percent')"
+                            :class="['sortable', sorter.column === 'memory_percent' && 'sort']"
+                            @click="$emit('update:sorter', 'memory_percent')">
                             MEM%
                         </td>
-                        <td class="" v-show="!getDisableStats().includes('memory_info')">
+                        <td v-show="!getDisableStats().includes('memory_info')" class="">
                             VIRT
                         </td>
-                        <td class="" v-show="!getDisableStats().includes('memory_info')">
+                        <td v-show="!getDisableStats().includes('memory_info')" class="">
                             RES
                         </td>
                         <td v-show="!getDisableStats().includes('nprocs')">
                             NPROCS
                         </td>
-                        <td scope="row" :class="['sortable', sorter.column === 'username' && 'sort']"
-                            @click="$emit('update:sorter', 'username')"
-                            v-show="!getDisableStats().includes('username')">
+                        <td v-show="!getDisableStats().includes('username')" scope="row"
+                            :class="['sortable', sorter.column === 'username' && 'sort']"
+                            @click="$emit('update:sorter', 'username')">
                             USER
                         </td>
-                        <td scope="row" class="" :class="['sortable', sorter.column === 'timemillis' && 'sort']"
-                            @click="$emit('update:sorter', 'timemillis')"
-                            v-show="!getDisableStats().includes('cpu_times')">
+                        <td v-show="!getDisableStats().includes('cpu_times')" scope="row" class=""
+                            :class="['sortable', sorter.column === 'timemillis' && 'sort']"
+                            @click="$emit('update:sorter', 'timemillis')">
                             TIME+
                         </td>
-                        <td scope="row" class="" :class="['sortable', sorter.column === 'num_threads' && 'sort']"
-                            @click="$emit('update:sorter', 'num_threads')"
-                            v-show="!getDisableStats().includes('num_threads')">
+                        <td v-show="!getDisableStats().includes('num_threads')" scope="row" class=""
+                            :class="['sortable', sorter.column === 'num_threads' && 'sort']"
+                            @click="$emit('update:sorter', 'num_threads')">
                             THR
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('nice')">NI</td>
-                        <td scope="row" class="table-cell widtd-60" v-show="!getDisableStats().includes('status')">S
+                        <td v-show="!getDisableStats().includes('nice')" scope="row">NI</td>
+                        <td v-show="!getDisableStats().includes('status')" scope="row" class="table-cell widtd-60">S
                         </td>
-                        <td scope="row" class="" :class="['sortable', sorter.column === 'io_counters' && 'sort']"
-                            v-show="ioReadWritePresentPrograms && !getDisableStats().includes('io_counters')"
+                        <td v-show="ioReadWritePresentPrograms && !getDisableStats().includes('io_counters')"
+                            scope="row" class="" :class="['sortable', sorter.column === 'io_counters' && 'sort']"
                             @click="$emit('update:sorter', 'io_counters')">
                             IORps
                         </td>
-                        <td scope="row" class="text-start"
+                        <td v-show="ioReadWritePresentPrograms && !getDisableStats().includes('io_counters')"
+                            scope="row" class="text-start"
                             :class="['sortable', sorter.column === 'io_counters' && 'sort']"
-                            v-show="ioReadWritePresentPrograms && !getDisableStats().includes('io_counters')"
                             @click="$emit('update:sorter', 'io_counters')">
                             IOWps
                         </td>
-                        <td scope="row" :class="['sortable', sorter.column === 'name' && 'sort']"
-                            @click="$emit('update:sorter', 'name')" v-show="!getDisableStats().includes('cmdline')">
+                        <td v-show="!getDisableStats().includes('cpu_num')" scope="col"
+                            :class="['sortable', sorter.column === 'cpu_num' && 'sort']"
+                            @click="$emit('update:sorter', 'cpu_num')">
+                            CPU
+                        </td>
+                        <td v-show="!getDisableStats().includes('cmdline')" scope="row"
+                            :class="['sortable', sorter.column === 'name' && 'sort']"
+                            @click="$emit('update:sorter', 'name')">
                             Command (click to pin)
                         </td>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-for="(process, processId) in programs" :key="processId">
-                        <td scope="row" :class="getCpuPercentAlert(process)"
-                            v-show="!getDisableStats().includes('cpu_percent')">
-                            {{ process.cpu_percent == -1 ? '?' : $filters.number(process.cpu_percent, 1) }}
+                        <td v-show="!getDisableStats().includes('cpu_percent')" scope="row"
+                            :class="getCpuPercentAlert(process)">
+                            {{ process.cpu_percent == -1 ? '?' : $filters.number(process.cpu_percent / process.irix, 1)
+                            }}
                         </td>
-                        <td scope="row" :class="getMemoryPercentAlert(process)"
-                            v-show="!getDisableStats().includes('memory_percent')">
+                        <td v-show="!getDisableStats().includes('memory_percent')" scope="row"
+                            :class="getMemoryPercentAlert(process)">
                             {{ process.memory_percent == -1 ? '?' : $filters.number(process.memory_percent, 1) }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('memory_info')">
+                        <td v-show="!getDisableStats().includes('memory_info') && !getDisableVms()" scope="row">
                             {{ $filters.bytes(process.memvirt) }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('memory_info')">
+                        <td v-show="!getDisableStats().includes('memory_info')" scope="row">
                             {{ $filters.bytes(process.memres) }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('nprocs')">
+                        <td v-show="!getDisableStats().includes('nprocs')" scope="row">
                             {{ process.nprocs }}
                         </td>
-                        <td scope="row" v-show="!getDisableStats().includes('username')">
+                        <td v-show="!getDisableStats().includes('username')" scope="row">
                             {{ process.username }}
                         </td>
-                        <td scope="row" class="" v-show="!getDisableStats().includes('cpu_times')">
+                        <td v-show="!getDisableStats().includes('cpu_times')" scope="row" class="">
                             {{ process.timeforhuman }}
                         </td>
-                        <td scope="row" class="" v-show="!getDisableStats().includes('num_threads')">
+                        <td v-show="!getDisableStats().includes('num_threads')" scope="row" class="">
                             {{ process.num_threads == -1 ? '?' : process.num_threads }}
                         </td>
-                        <td scope="row" :class="{ nice: process.isNice }" v-show="!getDisableStats().includes('nice')">
+                        <td v-show="!getDisableStats().includes('nice')" scope="row" :class="{ nice: process.isNice }">
                             {{ $filters.exclamation(process.nice) }}
                         </td>
-                        <td scope="row" :class="{ status: process.status == 'R' }"
-                            v-show="!getDisableStats().includes('status')">
+                        <td v-show="!getDisableStats().includes('status')" scope="row"
+                            :class="{ status: process.status == 'R' }">
                             {{ process.status }}
                         </td>
-                        <td scope="row" class=""
-                            v-show="ioReadWritePresentPrograms && !getDisableStats().includes('io_counters')">
+                        <td v-show="ioReadWritePresentPrograms && !getDisableStats().includes('io_counters')"
+                            scope="row" class="">
                             {{ $filters.bytes(process.io_read) }}
                         </td>
-                        <td scope="row" class="text-start"
-                            v-show="ioReadWritePresentPrograms && !getDisableStats().includes('io_counters')">
+                        <td v-show="ioReadWritePresentPrograms && !getDisableStats().includes('io_counters')"
+                            scope="row" class="text-start">
                             {{ $filters.bytes(process.io_write) }}
                         </td>
-                        <td scope="row" class="text-truncate"
-                            v-show="args.process_short_name && !getDisableStats().includes('cmdline')">
+                        <td v-show="!getDisableStats().includes('cpu_num')" scope="row">
+                            {{ process.cpu_num == null || process.cpu_num < 0 ? '-' : process.cpu_num }}
+                        </td>
+                        <td v-show="args.process_short_name && !getDisableStats().includes('cmdline')" scope="row"
+                            class="text-truncate">
                             {{ process.name }}
                         </td>
-                        <td scope="row" v-show="!args.process_short_name && !getDisableStats().includes('cmdline')">
+                        <td v-show="!args.process_short_name && !getDisableStats().includes('cmdline')" scope="row">
                             {{ process.cmdline }}
                         </td>
                     </tr>
@@ -367,221 +396,304 @@
 </template>
 
 <script>
-import { orderBy, last } from 'lodash';
-import { timemillis, timedelta, limitTo, number, dictToString } from '../filters.js';
-import { GlancesHelper } from '../services.js';
-import { store } from '../store.js';
+import { last, orderBy } from "lodash";
+import {
+	dictToString,
+	limitTo,
+	number,
+	timedelta,
+	timemillis,
+} from "../filters.js";
+import { GlancesHelper } from "../services.js";
+import { store } from "../store.js";
 
 export default {
-    props: {
-        data: {
-            type: Object
-        },
-        sorter: {
-            type: Object
-        }
-    },
-    data() {
-        return {
-            store
-        };
-    },
-    computed: {
-        args() {
-            return this.store.args || {};
-        },
-        config() {
-            return this.store.config || {};
-        },
-        stats_processlist() {
-            return this.data.stats['processlist'];
-        },
-        extended_stats() {
-            return this.stats_processlist.find(item => item['extended_stats'] === true) || null;
-        },
-        processes() {
-            const { sorter } = this;
-            const processes = (this.stats_processlist || []).map((process) => {
-                return this.updateProcess(process, this.data.stats['isWindows']);
-            });
+	props: {
+		data: {
+			type: Object,
+		},
+		sorter: {
+			type: Object,
+		},
+	},
+	data() {
+		return {
+			store,
+		};
+	},
+	computed: {
+		args() {
+			return this.store.args || {};
+		},
+		config() {
+			return this.store.config || {};
+		},
+		stats_processlist() {
+			return this.data.stats["processlist"];
+		},
+		stats_core() {
+			return this.data.stats["core"];
+		},
+		cpucore() {
+			return this.stats_core["log"] !== 0 ? this.stats_core["log"] : 1;
+		},
+		extended_stats() {
+			return (
+				this.stats_processlist.find(
+					(item) => item["extended_stats"] === true,
+				) || null
+			);
+		},
+		processes() {
+			const { sorter } = this;
+			const processes = (this.stats_processlist || []).map((process) => {
+				return this.updateProcess(
+					process,
+					this.data.stats["isWindows"],
+					this.args,
+					this.cpucore,
+				);
+			});
 
-            return orderBy(
-                processes,
-                [sorter.column].reduce((retval, col) => {
-                    if (col === 'io_counters') {
-                        col = ['io_read', 'io_write']
-                    }
-                    return retval.concat(col);
-                }, []),
-                [sorter.isReverseColumn(sorter.column) ? 'desc' : 'asc']
-            ).slice(0, this.limit);
-        },
-        ioReadWritePresentProcesses() {
-            return (this.stats_processlist || []).some(({ io_counters }) => io_counters);
-        },
-        stats_programlist() {
-            return this.data.stats['programlist'];
-        },
-        programs() {
-            const { sorter } = this;
-            const isWindows = this.data.stats['isWindows'];
-            const programs = (this.stats_programlist || []).map((process) => {
-                process.memvirt = '?';
-                process.memres = '?';
-                if (process.memory_info) {
-                    process.memvirt = process.memory_info.vms;
-                    process.memres = process.memory_info.rss;
-                }
+			return orderBy(
+				processes,
+				[sorter.column].reduce((retval, col) => {
+					if (col === "io_counters") {
+						col = ["io_read", "io_write"];
+					}
+					return retval.concat(col);
+				}, []),
+				[sorter.isReverseColumn(sorter.column) ? "desc" : "asc"],
+			).slice(0, this.limit);
+		},
+		ioReadWritePresentProcesses() {
+			return (this.stats_processlist || []).some(
+				({ io_counters }) => io_counters,
+			);
+		},
+		stats_programlist() {
+			return this.data.stats["programlist"];
+		},
+		programs() {
+			const { sorter } = this;
+			const isWindows = this.data.stats["isWindows"];
+			const programs = (this.stats_programlist || []).map((process) => {
+				process.memvirt = "?";
+				process.memres = "?";
+				if (process.memory_info) {
+					process.memvirt = process.memory_info.vms;
+					process.memres = process.memory_info.rss;
+				}
 
-                if (isWindows && process.username !== null) {
-                    process.username = last(process.username.split('\\'));
-                }
+				if (isWindows && process.username !== null) {
+					process.username = last(process.username.split("\\"));
+				}
 
-                process.timeforhuman = '?';
-                if (process.cpu_times) {
-                    process.timeplus = timedelta([process.cpu_times['user'], process.cpu_times['system']]);
-                    process.timeforhuman = process.timeplus.hours.toString().padStart(2, '0') + ':' +
-                        process.timeplus.minutes.toString().padStart(2, '0') + ':' +
-                        process.timeplus.seconds.toString().padStart(2, '0')
-                }
+				process.timeforhuman = "?";
+				if (process.cpu_times) {
+					process.timeplus = timedelta([
+						process.cpu_times["user"],
+						process.cpu_times["system"],
+					]);
+					process.timeforhuman =
+						process.timeplus.hours.toString().padStart(2, "0") +
+						":" +
+						process.timeplus.minutes.toString().padStart(2, "0") +
+						":" +
+						process.timeplus.seconds.toString().padStart(2, "0");
+				}
 
-                if (process.num_threads === null) {
-                    process.num_threads = -1;
-                }
+				if (process.num_threads === null) {
+					process.num_threads = -1;
+				}
 
-                if (process.cpu_percent === null) {
-                    process.cpu_percent = -1;
-                }
+				if (process.cpu_percent === null) {
+					process.cpu_percent = -1;
+				}
 
-                if (process.memory_percent === null) {
-                    process.memory_percent = -1;
-                }
+				if (process.memory_percent === null) {
+					process.memory_percent = -1;
+				}
 
-                process.io_read = null;
-                process.io_write = null;
+				process.io_read = null;
+				process.io_write = null;
 
-                if (process.io_counters) {
-                    process.io_read =
-                        (process.io_counters[0] - process.io_counters[2]) /
-                        process.time_since_update;
-                    process.io_write =
-                        (process.io_counters[1] - process.io_counters[3]) /
-                        process.time_since_update;
-                }
+				if (process.io_counters) {
+					process.io_read =
+						(process.io_counters[0] - process.io_counters[2]) /
+						process.time_since_update;
+					process.io_write =
+						(process.io_counters[1] - process.io_counters[3]) /
+						process.time_since_update;
+				}
 
-                process.isNice =
-                    process.nice !== undefined &&
-                    ((isWindows && process.nice != 32) || (!isWindows && process.nice != 0));
+				process.isNice =
+					process.nice !== undefined &&
+					((isWindows && process.nice != 32) ||
+						(!isWindows && process.nice != 0));
 
-                if (Array.isArray(process.cmdline)) {
-                    process.cmdline = process.cmdline.join(' ').replace(/\n/g, ' ');
-                }
+				if (Array.isArray(process.cmdline)) {
+					process.cmdline = process.cmdline.join(" ").replace(/\n/g, " ");
+				}
 
-                if (process.cmdline === null || process.cmdline.length === 0) {
-                    process.cmdline = process.name;
-                }
+				if (
+					typeof process.cmdline !== "string" ||
+					process.cmdline.length === 0
+				) {
+					process.cmdline = process.name;
+				}
 
-                return process;
-            });
+				return process;
+			});
 
-            return orderBy(
-                programs,
-                [sorter.column].reduce((retval, col) => {
-                    if (col === 'io_counters') {
-                        col = ['io_read', 'io_write']
-                    }
-                    return retval.concat(col);
-                }, []),
-                [sorter.isReverseColumn(sorter.column) ? 'desc' : 'asc']
-            ).slice(0, this.limit);
-        },
-        ioReadWritePresentPrograms() {
-            return (this.stats_programlist || []).some(({ io_counters }) => io_counters);
-        },
-        limit() {
-            return this.config.outputs !== undefined
-                ? this.config.outputs.max_processes_display
-                : undefined;
-        }
-    },
-    methods: {
-        updateProcess(process, isWindows) {
-            process.memvirt = '?';
-            process.memres = '?';
-            if (process.memory_info) {
-                process.memvirt = process.memory_info.vms;
-                process.memres = process.memory_info.rss;
-            }
+			return orderBy(
+				programs,
+				[sorter.column].reduce((retval, col) => {
+					if (col === "io_counters") {
+						col = ["io_read", "io_write"];
+					}
+					return retval.concat(col);
+				}, []),
+				[sorter.isReverseColumn(sorter.column) ? "desc" : "asc"],
+			).slice(0, this.limit);
+		},
+		ioReadWritePresentPrograms() {
+			return (this.stats_programlist || []).some(
+				({ io_counters }) => io_counters,
+			);
+		},
+		limit() {
+			return this.config.outputs !== undefined
+				? this.config.outputs.max_processes_display
+				: undefined;
+		},
+		focus() {
+			return this.args !== undefined &&
+				this.args.process_focus !== undefined &&
+				this.args.process_focus !== null
+				? this.args.process_focus.split(",")
+				: this.config.processlist !== undefined &&
+						this.config.processlist.focus !== undefined &&
+						this.config.processlist.focus !== null
+					? this.config.processlist.focus.split(",")
+					: [];
+		},
+		is_focus() {
+			return this.focus.length > 0;
+		},
+	},
+	methods: {
+		updateProcess(process, isWindows, args, cpucore) {
+			process.memvirt = "?";
+			process.memres = "?";
+			if (process.memory_info) {
+				process.memvirt = process.memory_info.vms;
+				process.memres = process.memory_info.rss;
+			}
 
-            if (isWindows && process.username !== null) {
-                process.username = last(process.username.split('\\'));
-            }
+			if (isWindows && process.username !== null) {
+				process.username = last(process.username.split("\\"));
+			}
 
-            process.timeforhuman = '?';
-            if (process.cpu_times) {
-                process.timeplus = timedelta([process.cpu_times['user'], process.cpu_times['system']]);
-                process.timeforhuman = process.timeplus.hours.toString().padStart(2, '0') + ':' +
-                    process.timeplus.minutes.toString().padStart(2, '0') + ':' +
-                    process.timeplus.seconds.toString().padStart(2, '0')
-            }
+			process.timeforhuman = "?";
+			if (process.cpu_times) {
+				process.timeplus = timedelta([
+					process.cpu_times["user"],
+					process.cpu_times["system"],
+				]);
+				process.timeforhuman =
+					process.timeplus.hours.toString().padStart(2, "0") +
+					":" +
+					process.timeplus.minutes.toString().padStart(2, "0") +
+					":" +
+					process.timeplus.seconds.toString().padStart(2, "0");
+			}
 
-            if (process.num_threads === null) {
-                process.num_threads = -1;
-            }
+			if (process.num_threads === null) {
+				process.num_threads = -1;
+			}
 
-            if (process.cpu_percent === null) {
-                process.cpu_percent = -1;
-            }
+			process.irix = 1;
+			if (process.cpu_percent === null) {
+				process.cpu_percent = -1;
+			} else {
+				if (args.disable_irix) {
+					process.irix = cpucore;
+				}
+			}
 
-            if (process.memory_percent === null) {
-                process.memory_percent = -1;
-            }
+			if (process.memory_percent === null) {
+				process.memory_percent = -1;
+			}
 
-            process.io_read = null;
-            process.io_write = null;
+			process.io_read = null;
+			process.io_write = null;
 
-            if (process.io_counters) {
-                process.io_read =
-                    (process.io_counters[0] - process.io_counters[2]) /
-                    process.time_since_update;
-                process.io_write =
-                    (process.io_counters[1] - process.io_counters[3]) /
-                    process.time_since_update;
-            }
+			if (process.io_counters) {
+				process.io_read =
+					(process.io_counters[0] - process.io_counters[2]) /
+					process.time_since_update;
+				process.io_write =
+					(process.io_counters[1] - process.io_counters[3]) /
+					process.time_since_update;
+			}
 
-            process.isNice =
-                process.nice !== undefined &&
-                ((isWindows && process.nice != 32) || (!isWindows && process.nice != 0));
+			process.isNice =
+				process.nice !== undefined &&
+				((isWindows && process.nice != 32) ||
+					(!isWindows && process.nice != 0));
 
-            if (Array.isArray(process.cmdline)) {
-                process.name = process.name + ' ' + process.cmdline.slice(1).join(' ').replace(/\n/g, ' ');
-                process.cmdline = process.cmdline.join(' ').replace(/\n/g, ' ');
-            }
+			if (Array.isArray(process.cmdline)) {
+				process.name =
+					process.name +
+					" " +
+					process.cmdline.slice(1).join(" ").replace(/\n/g, " ");
+				process.cmdline = process.cmdline.join(" ").replace(/\n/g, " ");
+			}
 
-            if (process.cmdline === null || process.cmdline.length === 0) {
-                process.cmdline = process.name;
-            }
-            return process
-        },
-        getCpuPercentAlert(process) {
-            return GlancesHelper.getAlert('processlist', 'processlist_cpu_', process.cpu_percent);
-        },
-        getMemoryPercentAlert(process) {
-            return GlancesHelper.getAlert('processlist', 'processlist_mem_', process.cpu_percent);
-        },
-        getDisableStats() {
-            return GlancesHelper.getLimit('processlist', 'processlist_disable_stats') || [];
-        },
-        setExtendedStats(pid) {
-            fetch('api/4/processes/extended/' + pid.toString(), { method: 'POST' })
-                .then((response) => response.json());
-            this.$forceUpdate()
-        },
-        disableExtendedStats() {
-            fetch('api/4/processes/extended/disable', { method: 'POST' })
-                .then((response) => response.json());
-            this.$forceUpdate()
-        }
-    }
+			if (typeof process.cmdline !== "string" || process.cmdline.length === 0) {
+				process.cmdline = process.name;
+			}
+			return process;
+		},
+		getCpuPercentAlert(process) {
+			return GlancesHelper.getAlert(
+				"processlist",
+				"processlist_cpu_",
+				process.cpu_percent,
+			);
+		},
+		getMemoryPercentAlert(process) {
+			return GlancesHelper.getAlert(
+				"processlist",
+				"processlist_mem_",
+				process.cpu_percent,
+			);
+		},
+		getDisableStats() {
+			return (
+				GlancesHelper.getLimit("processlist", "processlist_disable_stats") || []
+			);
+		},
+		getDisableVms() {
+			const ret = GlancesHelper.getLimit(
+				"processlist",
+				"processlist_disable_virtual_memory",
+			) || ["False"];
+			return ret[0].toLowerCase() === "true" ? true : false;
+		},
+		setExtendedStats(pid) {
+			fetch("api/4/processes/extended/" + pid.toString(), {
+				method: "POST",
+			}).then((response) => response.json());
+			this.$forceUpdate();
+		},
+		disableExtendedStats() {
+			fetch("api/4/processes/extended/disable", { method: "POST" }).then(
+				(response) => response.json(),
+			);
+			this.$forceUpdate();
+		},
+	},
 };
 </script>

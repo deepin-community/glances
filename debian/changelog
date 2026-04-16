@@ -1,3 +1,76 @@
+glances (4.5.3.2+dfsg-1deepin1) unstable; urgency=medium
+
+  * Fix CVE-2026-33641 CVE-2026-33533 CVE-2026-32634 CVE-2026-32633 CVE-
+    2026-32632 CVE-2026-32608 CVE-2026-32611 CVE-2026-32609 CVE-2026-
+    32610 CVE-2026-32596 CVE-2026-30930 CVE-2026-30928
+
+ -- deepin-ci-robot <packages@deepin.org>  Thu, 16 Apr 2026 16:49:20 +0800
+
+glances (4.5.3.2+dfsg-1) unstable; urgency=medium
+
+  [ Alexandre Detiste ]
+  * recommends python3-pysnmp instead of transitional python3-pysnmp4
+
+  [ Daniel Echeverri ]
+  * New upstream version 4.5.3.2+dfsg
+    + Fixing CVE-2026-33533 CVE-2026-33641 (Closes: #1132603)
+  * debian/control
+    + Update standards version to 4.7.4
+  * debian/patches
+    + Refresh 006_indicate_user_webserver_static_files_not_included.patch
+  * debian/source/lintian-overrides
+    + Add lintian override for source-is-missing in glances-flame.html
+
+ -- Daniel Echeverri <epsilon@debian.org>  Sun, 05 Apr 2026 18:25:43 -0500
+
+glances (4.5.2+dfsg-1) unstable; urgency=medium
+
+  * New upstream version 4.5.2+dfsg (Closes: #1131197)
+    + Fixing CVE-2026-32596 CVE-2026-32608 CVE-2026-32609 CVE-2026-32610
+      CVE-2026-32611 CVE-2026-32632 CVE-2026-32633 CVE-2026-32634
+
+ -- Daniel Echeverri <epsilon@debian.org>  Wed, 18 Mar 2026 19:31:09 -0500
+
+glances (4.5.1+dfsg-1) unstable; urgency=medium
+
+  * New upstream version 4.5.1+dfsg
+    + Fixing CVE-2026-30928 (Closes: #1130503)
+    + Fixing CVE-2026-30930 (Closes: #1130504)
+  * debian/patches
+    + Refresh 004_disable-pypi.patch
+    + Refresh 006_indicate_user_webserver_static_files_not_included.patch
+    + Refresh 008_fix_lintian_warnings_in_manpage.diff
+  * debian/control
+    + Drop python-fastapi from Recommends
+      it's already in Depends. (Closes: #1115361)
+    + Remove redundant Priority and Rules-Requires-Root fields
+    + Update standards version to 4.7.3
+  * debian/copyright
+    + Extend copyright debian holders years
+    + Update renamed glances_stdout_api_doc.py pattern
+  * debian/watch
+    + Update to Version 5
+
+ -- Daniel Echeverri <epsilon@debian.org>  Thu, 12 Mar 2026 19:52:28 -0500
+
+glances (4.3.3+dfsg-1) unstable; urgency=medium
+
+  * New upstream version 4.3.3+dfsg
+  * debian/control
+    + Add bash-completion in B-D
+  * debian/glances.postinst
+    + Add function to generate bash completion
+  * debian/glances.postrm
+    + Remove bash completion file in purge process
+  * debian/patches
+    + Refresh 004_disable-pypi.patch
+    + Refresh 006_indicate_user_webserver_static_files_not_included.patch
+    + Refresh 008_fix_lintian_warnings_in_manpage.diff patch
+  * debian/source/lintian-overrides
+    + Add new lintian overrides
+
+ -- Daniel Echeverri <epsilon@debian.org>  Sat, 30 Aug 2025 20:17:27 -0500
+
 glances (4.3.1+dfsg-1) unstable; urgency=medium
 
   * New upstream release

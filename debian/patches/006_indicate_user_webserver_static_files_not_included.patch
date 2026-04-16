@@ -9,7 +9,7 @@ Last-Update: 2025-01-07
 
 --- a/glances/main.py
 +++ b/glances/main.py
-@@ -442,7 +442,7 @@
+@@ -465,7 +465,7 @@
              action='store_true',
              default=False,
              dest='webserver',
@@ -17,4 +17,4 @@ Last-Update: 2025-01-07
 +            help='run Glances in web server mode (python-fastapi, python3-uvicorn, python3-jinja2 libs needed, static files not included)',
          )
          parser.add_argument(
-             '--cached-time',
+             '--enable-mcp',

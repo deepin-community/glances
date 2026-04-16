@@ -1,5 +1,5 @@
 <template>
-    <section class="plugin" id="connections">
+    <section id="connections" class="plugin">
         <table class="table table-sm table-borderless margin-bottom">
             <thead>
                 <tr>
@@ -37,44 +37,44 @@
 
 <script>
 export default {
-    props: {
-        data: {
-            type: Object
-        }
-    },
-    computed: {
-        stats() {
-            return this.data.stats['connections'];
-        },
-        view() {
-            return this.data.views['connections'];
-        },
-        listen() {
-            return this.stats['LISTEN'];
-        },
-        initiated() {
-            return this.stats['initiated'];
-        },
-        established() {
-            return this.stats['ESTABLISHED'];
-        },
-        terminated() {
-            return this.stats['terminated'];
-        },
-        tracked() {
-            return {
-                count: this.stats['nf_conntrack_count'],
-                max: this.stats['nf_conntrack_max']
-            };
-        }
-    },
-    methods: {
-        getDecoration(value) {
-            if (this.view[value] === undefined) {
-                return;
-            }
-            return this.view[value].decoration.toLowerCase();
-        }
-    }
+	props: {
+		data: {
+			type: Object,
+		},
+	},
+	computed: {
+		stats() {
+			return this.data.stats["connections"];
+		},
+		view() {
+			return this.data.views["connections"];
+		},
+		listen() {
+			return this.stats["LISTEN"];
+		},
+		initiated() {
+			return this.stats["initiated"];
+		},
+		established() {
+			return this.stats["ESTABLISHED"];
+		},
+		terminated() {
+			return this.stats["terminated"];
+		},
+		tracked() {
+			return {
+				count: this.stats["nf_conntrack_count"],
+				max: this.stats["nf_conntrack_max"],
+			};
+		},
+	},
+	methods: {
+		getDecoration(value) {
+			if (this.view[value] === undefined) {
+				return;
+			}
+			return this.view[value].decoration.toLowerCase();
+		},
+	},
 };
 </script>

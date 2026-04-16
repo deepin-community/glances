@@ -1,5 +1,5 @@
 <template>
-    <section class="plugin" id="processcount">
+    <section id="processcount" class="plugin">
         <span class="title">TASKS</span>
         <span>{{ total }} ({{ thread }} thr),</span>
         <span>{{ running }} run,</span>
@@ -12,44 +12,44 @@
 </template>
 
 <script>
-import { store } from '../store.js';
+import { store } from "../store.js";
 
 export default {
-    props: {
-        data: {
-            type: Object
-        },
-        sorter: {
-            type: Object
-        }
-    },
-    data() {
-        return {
-            store
-        };
-    },
-    computed: {
-        args() {
-            return this.store.args || {};
-        },
-        stats() {
-            return this.data.stats['processcount'];
-        },
-        total() {
-            return this.stats['total'] || 0;
-        },
-        running() {
-            return this.stats['running'] || 0;
-        },
-        sleeping() {
-            return this.stats['sleeping'] || 0;
-        },
-        stopped() {
-            return this.stats['stopped'] || 0;
-        },
-        thread() {
-            return this.stats['thread'] || 0;
-        }
-    }
+	props: {
+		data: {
+			type: Object,
+		},
+		sorter: {
+			type: Object,
+		},
+	},
+	data() {
+		return {
+			store,
+		};
+	},
+	computed: {
+		args() {
+			return this.store.args || {};
+		},
+		stats() {
+			return this.data.stats["processcount"];
+		},
+		total() {
+			return this.stats["total"] || 0;
+		},
+		running() {
+			return this.stats["running"] || 0;
+		},
+		sleeping() {
+			return this.stats["sleeping"] || 0;
+		},
+		stopped() {
+			return this.stats["stopped"] || 0;
+		},
+		thread() {
+			return this.stats["thread"] || 0;
+		},
+	},
 };
 </script>

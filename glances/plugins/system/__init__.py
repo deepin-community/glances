@@ -13,7 +13,6 @@ import os
 import platform
 import re
 
-from glances.globals import iteritems
 from glances.logger import logger
 from glances.plugins.plugin.model import GlancesPluginModel
 
@@ -108,7 +107,7 @@ def _linux_os_release():
     return pretty_name
 
 
-class PluginModel(GlancesPluginModel):
+class SystemPlugin(GlancesPluginModel):
     """Glances' host/system plugin.
 
     stats is a dict
@@ -139,7 +138,7 @@ class PluginModel(GlancesPluginModel):
 
         # Windows OS tips
         if self.short_system_name == 'windows':
-            for key, value in iteritems(snmp_to_human['windows']):
+            for key, value in snmp_to_human['windows'].items():
                 if re.search(key, stats['system_name']):
                     stats['os_name'] = value
                     break
@@ -236,7 +235,7 @@ class PluginModel(GlancesPluginModel):
             return ret
 
         # Build the string message
-        if args.client:
+        if args and args.client:
             # Client mode
             if args.cs_status.lower() == "connected":
                 msg = 'Connected to '
@@ -253,7 +252,7 @@ class PluginModel(GlancesPluginModel):
         ret.append(self.curse_add_line(msg, "TITLE"))
 
         # System info
-        msg = ' ' + self.stats['hr_name']
+        msg = ' ' + self.stats['hr_name'] + ' '
         ret.append(self.curse_add_line(msg, optional=True))
 
         # Return the message with decoration

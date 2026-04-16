@@ -1,7 +1,7 @@
 #
 # This file is part of Glances.
 #
-# SPDX-FileCopyrightText: 2022 Nicolas Hennion <nicolas@nicolargo.com>
+# SPDX-FileCopyrightText: 2025 Nicolas Hennion <nicolas@nicolargo.com>
 #
 # SPDX-License-Identifier: LGPL-3.0-only
 #
@@ -10,6 +10,7 @@
 
 import psutil
 
+from glances.plugins.fs.zfs import zfs_enable, zfs_stats
 from glances.plugins.plugin.model import GlancesPluginModel
 
 # Fields description
@@ -22,10 +23,12 @@ different memory values depending on the platform (e.g. free + buffers + cached 
 and it is supposed to be used to monitor actual memory usage in a cross platform fashion.',
         'unit': 'bytes',
         'min_symbol': 'K',
+        'short_name': 'avail',
     },
     'percent': {
         'description': 'The percentage usage calculated as (total - available) / total * 100.',
         'unit': 'percent',
+        'mmm': True,
     },
     'used': {
         'description': 'Memory used, calculated differently depending on the platform and \
@@ -43,20 +46,28 @@ note that this doesn\'t reflect the actual memory available (use \'available\' i
         'description': '*(UNIX)*: memory currently in use or very recently used, and so it is in RAM.',
         'unit': 'bytes',
         'min_symbol': 'K',
+        'optional': True,
     },
     'inactive': {
         'description': '*(UNIX)*: memory that is marked as not used.',
         'unit': 'bytes',
         'min_symbol': 'K',
         'short_name': 'inacti',
+        'optional': True,
     },
     'buffers': {
         'description': '*(Linux, BSD)*: cache for things like file system metadata.',
         'unit': 'bytes',
         'min_symbol': 'K',
         'short_name': 'buffer',
+        'optional': True,
     },
-    'cached': {'description': '*(Linux, BSD)*: cache for various things.', 'unit': 'bytes', 'min_symbol': 'K'},
+    'cached': {
+        'description': '*(Linux, BSD)*: cache for various things (including ZFS cache).',
+        'unit': 'bytes',
+        'min_symbol': 'K',
+        'optional': True,
+    },
     'wired': {
         'description': '*(BSD, macOS)*: memory that is marked to always stay in RAM. It is never moved to disk.',
         'unit': 'bytes',
@@ -104,7 +115,7 @@ snmp_oid = {
 items_history_list = [{'name': 'percent', 'description': 'RAM memory usage', 'y_unit': '%'}]
 
 
-class PluginModel(GlancesPluginModel):
+class MemPlugin(GlancesPluginModel):
     """Glances' memory plugin.
 
     stats is a dict
@@ -116,99 +127,145 @@ class PluginModel(GlancesPluginModel):
             args=args, config=config, items_history_list=items_history_list, fields_description=fields_description
         )
 
+        # Should we display available memory instead of used memory ?
+        self.available = self.get_conf_value('available', default=['False'])[0].lower() == 'true'
+
+        # ZFS
+        self.zfs_enabled = zfs_enable()
+
         # We want to display the stat in the curse interface
         self.display_curse = True
 
+    def _update_for_local(self, stats):
+        # Update stats using the standard system lib
+        # Grab MEM using the psutil virtual_memory method
+        vm_stats = psutil.virtual_memory()
+
+        # Get all the memory stats (copy/paste of the psutil documentation)
+        # total: total physical memory available.
+        # available: the actual amount of available memory that can be given instantly
+        # to processes that request more memory in bytes; this is calculated by summing
+        # different memory values depending on the platform (e.g. free + buffers + cached on Linux)
+        # and it is supposed to be used to monitor actual memory usage in a cross platform fashion.
+        # percent: the percentage usage calculated as (total - available) / total * 100.
+        # used: memory used, calculated differently depending on the platform and designed for informational
+        # purposes only.
+        # free: memory not being used at all (zeroed) that is readily available; note that this doesn't
+        # reflect the actual memory available (use ‘available’ instead).
+        # Platform-specific fields:
+        # active: (UNIX): memory currently in use or very recently used, and so it is in RAM.
+        # inactive: (UNIX): memory that is marked as not used.
+        # buffers: (Linux, BSD): cache for things like file system metadata.
+        # cached: (Linux, BSD): cache for various things.
+        # wired: (BSD, macOS): memory that is marked to always stay in RAM. It is never moved to disk.
+        # shared: (BSD): memory that may be simultaneously accessed by multiple processes.
+        self.reset()
+        for mem in [
+            'total',
+            'available',
+            'percent',
+            'used',
+            'free',
+            'active',
+            'inactive',
+            'buffers',
+            'cached',
+            'wired',
+            'shared',
+        ]:
+            if hasattr(vm_stats, mem):
+                stats[mem] = getattr(vm_stats, mem)
+
+        # Manage ZFS cache (see #3979 for details)
+        if self.zfs_enabled:
+            zfs_size = 0
+            zfs_shrink = 0
+            zfs_cache_stats = zfs_stats()
+            # Uncomment the following line to use the test data
+            # zfs_cache_stats = zfs_stats(['./tests-data/plugins/fs/zfs/arcstats'])
+            if 'arcstats.size' in zfs_cache_stats:
+                zfs_size = zfs_cache_stats['arcstats.size']
+                if 'arcstats.c_min' in zfs_cache_stats:
+                    zfs_cmin = zfs_cache_stats['arcstats.c_min']
+                else:
+                    zfs_cmin = 0
+
+                zfs_shrink = zfs_size - zfs_cmin
+            # Add the ZFS cache to the 'cached' memory
+            if 'cached' in stats:
+                stats['cached'] += zfs_size
+            else:
+                stats['cached'] = zfs_size
+
+            # Add the amount ZFS cache can shrink to 'available' memory
+            if 'available' in stats:
+                stats['available'] += zfs_shrink
+            else:
+                stats['available'] = zfs_shrink
+
+            # Subtract the amount ZFS cache can shrink from 'used' memory
+            stats['used'] -= zfs_shrink
+
+            # Update percent to reflect new 'available' value
+            stats['percent'] = round(float((stats['total'] - stats['available']) / stats['total'] * 100), 1)
+
+        stats['used'] = stats['total'] - stats['available']
+
+        return stats
+
+    def _update_for_win_os_esxi(self, stats):
+        # Mem stats for Windows|Vmware Esxi are stored in the FS table
+        try:
+            fs_stat = self.get_stats_snmp(snmp_oid=snmp_oid[self.short_system_name], bulk=True)
+        except KeyError:
+            self.reset()
+        else:
+            for fs in fs_stat:
+                # The Physical Memory (Windows) or Real Memory (VMware)
+                # gives statistics on RAM usage and availability.
+                if fs in ('Physical Memory', 'Real Memory'):
+                    stats['total'] = int(fs_stat[fs]['size']) * int(fs_stat[fs]['alloc_unit'])
+                    stats['used'] = int(fs_stat[fs]['used']) * int(fs_stat[fs]['alloc_unit'])
+                    stats['percent'] = float(stats['used'] * 100 / stats['total'])
+                    stats['free'] = stats['total'] - stats['used']
+                    break
+
+        return stats
+
+    def _update_for_other_oses(self, stats):
+        stats = self.get_stats_snmp(snmp_oid=snmp_oid['default'])
+
+        if stats['total'] == '':
+            self.reset()
+            return 'reset'
+
+        for k in stats:
+            stats[k] = int(stats[k]) * 1024
+
+        # used=total-free
+        stats['used'] = stats['total'] - stats['free']
+
+        # percent: the percentage usage calculated as (total - available) / total * 100.
+        stats['percent'] = float((stats['total'] - stats['free']) / stats['total'] * 100)
+
+        return stats
+
     @GlancesPluginModel._check_decorator
     @GlancesPluginModel._log_result_decorator
+    @GlancesPluginModel._manage_mmm
     def update(self):
         """Update RAM memory stats using the input method."""
-        # Init new stats
-        stats = self.get_init_value()
+        init = self.get_init_value()
 
         if self.input_method == 'local':
-            # Update stats using the standard system lib
-            # Grab MEM using the psutil virtual_memory method
-            vm_stats = psutil.virtual_memory()
-
-            # Get all the memory stats (copy/paste of the psutil documentation)
-            # total: total physical memory available.
-            # available: the actual amount of available memory that can be given instantly
-            # to processes that request more memory in bytes; this is calculated by summing
-            # different memory values depending on the platform (e.g. free + buffers + cached on Linux)
-            # and it is supposed to be used to monitor actual memory usage in a cross platform fashion.
-            # percent: the percentage usage calculated as (total - available) / total * 100.
-            # used: memory used, calculated differently depending on the platform and designed for informational
-            # purposes only.
-            # free: memory not being used at all (zeroed) that is readily available; note that this doesn't
-            # reflect the actual memory available (use ‘available’ instead).
-            # Platform-specific fields:
-            # active: (UNIX): memory currently in use or very recently used, and so it is in RAM.
-            # inactive: (UNIX): memory that is marked as not used.
-            # buffers: (Linux, BSD): cache for things like file system metadata.
-            # cached: (Linux, BSD): cache for various things.
-            # wired: (BSD, macOS): memory that is marked to always stay in RAM. It is never moved to disk.
-            # shared: (BSD): memory that may be simultaneously accessed by multiple processes.
-            self.reset()
-            for mem in [
-                'total',
-                'available',
-                'percent',
-                'used',
-                'free',
-                'active',
-                'inactive',
-                'buffers',
-                'cached',
-                'wired',
-                'shared',
-            ]:
-                if hasattr(vm_stats, mem):
-                    stats[mem] = getattr(vm_stats, mem)
-
-            # Use the 'free'/htop calculation
-            # free=available+buffer+cached
-            stats['free'] = stats['available']
-            if hasattr(stats, 'buffers'):
-                stats['free'] += stats['buffers']
-            if hasattr(stats, 'cached'):
-                stats['free'] += stats['cached']
-            # used=total-free
-            stats['used'] = stats['total'] - stats['free']
+            stats = self._update_for_local(init)
+        elif self.input_method == 'snmp' and self.short_system_name in ('windows', 'esxi'):
+            stats = self._update_for_win_os_esxi(init)
         elif self.input_method == 'snmp':
-            # Update stats using SNMP
-            if self.short_system_name in ('windows', 'esxi'):
-                # Mem stats for Windows|Vmware Esxi are stored in the FS table
-                try:
-                    fs_stat = self.get_stats_snmp(snmp_oid=snmp_oid[self.short_system_name], bulk=True)
-                except KeyError:
-                    self.reset()
-                else:
-                    for fs in fs_stat:
-                        # The Physical Memory (Windows) or Real Memory (VMware)
-                        # gives statistics on RAM usage and availability.
-                        if fs in ('Physical Memory', 'Real Memory'):
-                            stats['total'] = int(fs_stat[fs]['size']) * int(fs_stat[fs]['alloc_unit'])
-                            stats['used'] = int(fs_stat[fs]['used']) * int(fs_stat[fs]['alloc_unit'])
-                            stats['percent'] = float(stats['used'] * 100 / stats['total'])
-                            stats['free'] = stats['total'] - stats['used']
-                            break
-            else:
-                # Default behavior for others OS
-                stats = self.get_stats_snmp(snmp_oid=snmp_oid['default'])
+            stats = self._update_for_other_oses(init)
 
-                if stats['total'] == '':
-                    self.reset()
-                    return self.stats
-
-                for k in stats:
-                    stats[k] = int(stats[k]) * 1024
-
-                # used=total-free
-                stats['used'] = stats['total'] - stats['free']
-
-                # percent: the percentage usage calculated as (total - available) / total * 100.
-                stats['percent'] = float((stats['total'] - stats['free']) / stats['total'] * 100)
+        if stats in ['reset']:
+            return self.stats
 
         # Update the stats
         self.stats = stats
@@ -222,11 +279,8 @@ class PluginModel(GlancesPluginModel):
 
         # Add specifics information
         # Alert and log
-        self.views['percent']['decoration'] = self.get_alert_log(self.stats['used'], maximum=self.stats['total'])
-        # Optional
-        for key in ['active', 'inactive', 'buffers', 'cached']:
-            if key in self.stats:
-                self.views[key]['optional'] = True
+        if 'used' in self.stats and 'total' in self.stats:
+            self.views['percent']['decoration'] = self.get_alert_log(self.stats['used'], maximum=self.stats['total'])
 
     def msg_curse(self, args=None, max_width=None):
         """Return the dict to display in the curse interface."""
@@ -261,7 +315,10 @@ class PluginModel(GlancesPluginModel):
         # used + buffers
         ret.append(self.curse_new_line())
         # Used memory usage
-        ret.extend(self.curse_add_stat('used', width=15))
+        if self.available:
+            ret.extend(self.curse_add_stat('available', width=15))
+        else:
+            ret.extend(self.curse_add_stat('used', width=15))
         # Buffers memory usage
         ret.extend(self.curse_add_stat('buffers', width=16, header='  '))
 

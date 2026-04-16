@@ -14,6 +14,13 @@ import tempfile
 from logging import DEBUG
 from warnings import simplefilter
 
+try:
+    import shtab
+except ImportError:
+    shtab_tag = False
+else:
+    shtab_tag = True
+
 from glances import __apiversion__, __version__, psutil_version
 from glances.config import Config
 from glances.globals import WINDOWS, disable, enable
@@ -96,19 +103,18 @@ Examples of use:
 
 """
 
-    def __init__(self, args_begin_at=1):
+    def __init__(self):
         """Manage the command line arguments."""
-        self.init_glances(args_begin_at)
+        self.init_glances()
 
-    def init_glances(self, args_begin_at):
+    def init_glances(self):
         """Main method to init Glances."""
         # Read the command line arguments or parse the one given in parameter (parser)
-        self.args = self.parse_args(args_begin_at)
+        self.args = self.parse_args()
 
         # Load the configuration file, if it exists
         # This function should be called after the parse_args
-        # because the configuration file path can be defined
-        self.config = Config(self.args.conf_file)
+        self.config = Config(config_dir=self.args.conf_file, disable_config_exec=self.args.disable_config_exec)
 
         # Init Glances debug mode
         self.init_debug(self.args)
@@ -145,6 +151,10 @@ Examples of use:
         if not self.args.process_filter and not self.is_standalone():
             logger.debug("Process filter is only available in standalone mode")
 
+        # Focus filter is only available in standalone mode
+        if not self.args.process_focus and not self.is_standalone():
+            logger.debug("Process focus is only available in standalone mode")
+
         # Cursor option is only available in standalone mode
         if not self.args.disable_cursor and not self.is_standalone():
             logger.debug("Cursor is only available in standalone mode")
@@ -175,9 +185,16 @@ Examples of use:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=self.example_of_use,
         )
+        if shtab_tag:
+            shtab.add_argument_to(parser, ["--print-completion"])
         parser.add_argument('-V', '--version', action='version', version=self.version_msg())
         parser.add_argument('-d', '--debug', action='store_true', default=False, dest='debug', help='enable debug mode')
-        parser.add_argument('-C', '--config', dest='conf_file', help='path to the configuration file')
+        if shtab_tag:
+            parser.add_argument(
+                '-C', '--config', dest='conf_file', help='path to the configuration file'
+            ).complete = shtab.FILE
+        else:
+            parser.add_argument('-C', '--config', dest='conf_file', help='path to the configuration file')
         parser.add_argument('-P', '--plugins', dest='plugin_dir', help='path to additional plugin directory')
         # Disable plugin
         parser.add_argument(
@@ -323,6 +340,12 @@ Examples of use:
             dest='disable_cursor',
             help='disable cursor (process selection) in the UI',
         )
+        parser.add_argument(
+            '--arrow-keys-sort',  # See issue #3385
+            action='store_true',
+            default=False,
+            help='Use arrow keys to sort the process list instead of the SHIFT+key combinations',
+        )
         # Sort processes list
         parser.add_argument(
             '--sort-processes',
@@ -365,7 +388,7 @@ Examples of use:
             default=None,
             type=str,
             dest='export_process_filter',
-            help='set the export process filter (comman separated list of regular expression)',
+            help='set the export process filter (comma-separated list of regular expression)',
         )
         # Client/Server option
         parser.add_argument(
@@ -403,12 +426,13 @@ Examples of use:
             dest='bind_address',
             help='bind server to the given IPv4/IPv6 address or hostname',
         )
+        parser.add_argument('-u', dest='username_used', help='use or define the given username')
         parser.add_argument(
             '--username',
             action='store_true',
             default=False,
             dest='username_prompt',
-            help='define a client/server username',
+            help='define or use an username',
         )
         parser.add_argument(
             '--password',
@@ -417,7 +441,6 @@ Examples of use:
             dest='password_prompt',
             help='define a client/server password',
         )
-        parser.add_argument('-u', dest='username_used', help='use the given client/server username')
         parser.add_argument('--snmp-community', default='public', dest='snmp_community', help='SNMP community')
         parser.add_argument('--snmp-port', default=161, type=int, dest='snmp_port', help='SNMP port')
         parser.add_argument('--snmp-version', default='2c', dest='snmp_version', help='SNMP version (1, 2c or 3)')
@@ -443,6 +466,19 @@ Examples of use:
             default=False,
             dest='webserver',
             help='run Glances in web server mode (FastAPI, Uvicorn, Jinja2 libs needed)',
+        )
+        parser.add_argument(
+            '--enable-mcp',
+            action='store_true',
+            default=False,
+            dest='enable_mcp',
+            help='enable the MCP (Model Context Protocol) server alongside the web server (mcp package needed)',
+        )
+        parser.add_argument(
+            '--mcp-path',
+            default=None,
+            dest='mcp_path',
+            help='set the MCP server mount path [default: /mcp]',
         )
         parser.add_argument(
             '--cached-time',
@@ -481,6 +517,14 @@ Examples of use:
             type=str,
             dest='process_filter',
             help='set the process filter pattern (regular expression)',
+        )
+        # Process will focus on some process (comma-separated list of Glances filter)
+        parser.add_argument(
+            '--process-focus',
+            default=None,
+            type=str,
+            dest='process_focus',
+            help='set a process list to focus on (comma-separated list of Glances filter)',
         )
         parser.add_argument(
             '--process-short-name',
@@ -536,7 +580,18 @@ Examples of use:
             help='test memory leak (python 3.4 or higher needed)',
         )
         parser.add_argument(
-            '--api-doc', default=None, action='store_true', dest='stdout_apidoc', help='display fields descriptions'
+            '--api-doc',
+            default=None,
+            action='store_true',
+            dest='stdout_api_doc',
+            help='display Python API documentation',
+        )
+        parser.add_argument(
+            '--api-restful-doc',
+            default=None,
+            action='store_true',
+            dest='stdout_api_restful_doc',
+            help='display Restful API documentation',
         )
         if not WINDOWS:
             parser.add_argument(
@@ -567,6 +622,13 @@ Examples of use:
             default=False,
             dest='diskio_iops',
             help='show IO per second in the DiskIO plugin',
+        )
+        parser.add_argument(
+            '--diskio-latency',
+            action='store_true',
+            default=False,
+            dest='diskio_latency',
+            help='show IO latency in the DiskIO plugin',
         )
         parser.add_argument(
             '--fahrenheit',
@@ -602,6 +664,14 @@ Examples of use:
             default=False,
             help='hide public information (like public IP)',
         )
+        # Security options
+        parser.add_argument(
+            '--disable-config-exec',
+            action='store_true',
+            default=False,
+            dest='disable_config_exec',
+            help='disable backtick command execution in configuration values (recommended for system services)',
+        )
         # Globals options
         parser.add_argument(
             '--disable-check-update',
@@ -615,6 +685,22 @@ Examples of use:
             dest='strftime_format',
             default='',
             help='strftime format string for displaying current date in standalone mode',
+        )
+        # Fetch
+        parser.add_argument(
+            '--fetch',
+            '--stdout-fetch',
+            action='store_true',
+            default=False,
+            dest='stdout_fetch',
+            help='display a (neo)fetch like summary and exit',
+        )
+        parser.add_argument(
+            '--fetch-template',
+            '--stdout-fetch-template',
+            dest='fetch_template',
+            default='',
+            help='overwrite default fetch template file',
         )
 
         return parser
@@ -675,7 +761,10 @@ Examples of use:
         args.network_cumul = False
 
         # Processlist is updated in processcount
-        if getattr(args, 'enable_processlist', False) or getattr(args, 'enable_programlist', False):
+        if getattr(args, 'disable_processcount', False):
+            logger.warning('Processcount is disable, so processlist (updated by processcount) is also disable')
+            disable(args, 'processlist')
+        elif getattr(args, 'enable_processlist', False) or getattr(args, 'enable_programlist', False):
             enable(args, 'processcount')
 
         # Set a default export_process_filter (with all process) when using the stdout mode
@@ -706,12 +795,10 @@ Examples of use:
             # Every username needs a password
             args.password_prompt = True
             # Prompt username
-            if args.server:
-                args.username = self.__get_username(description='Define the Glances server username: ')
-            elif args.webserver:
-                args.username = self.__get_username(description='Define the Glances webserver username: ')
+            if args.server or args.webserver:
+                args.username = self.__get_username(description='Enter new username: ')
             elif args.client:
-                args.username = self.__get_username(description='Enter the Glances server username: ')
+                args.username = self.__get_username(description='Enter username: ')
         else:
             if args.username_used:
                 # A username has been set using the -u option ?
@@ -722,21 +809,15 @@ Examples of use:
 
         if args.password_prompt or args.username_used:
             # Interactive or file password
-            if args.server:
+            if args.server or args.webserver:
                 args.password = self.__get_password(
-                    description=f'Define the Glances server password ({args.username} username): ',
-                    confirm=True,
-                    username=args.username,
-                )
-            elif args.webserver:
-                args.password = self.__get_password(
-                    description=f'Define the Glances webserver password ({args.username} username): ',
+                    description='Enter new password: ',
                     confirm=True,
                     username=args.username,
                 )
             elif args.client:
                 args.password = self.__get_password(
-                    description=f'Enter the Glances server password ({args.username} username): ',
+                    description='Enter password: ',
                     clear=True,
                     username=args.username,
                 )
@@ -773,6 +854,10 @@ Examples of use:
             disable(args, 'memswap')
             disable(args, 'load')
 
+        # Unicode => No separator
+        if args.disable_unicode:
+            args.enable_separator = False
+
         # Memory leak
         if getattr(args, 'memory_leak', False):
             logger.info('Memory leak detection enabled')
@@ -782,15 +867,18 @@ Examples of use:
             args.time = 1
             args.disable_history = True
 
-        # Unicode => No separator
-        if args.disable_unicode:
-            args.enable_separator = False
+        # Disable history if history_size is 0
+        if self.config.has_section('global'):
+            if self.config.get_int_value('global', 'history_size', default=1200) == 0:
+                args.disable_history = True
 
-    def parse_args(self, args_begin_at):
-        """Parse command line arguments.
-        Glances args start at position args_begin_at.
-        """
-        return self.init_args().parse_args(sys.argv[args_begin_at:])
+        # Display an information message if history is disabled
+        if args.disable_history:
+            logger.info("Stats history is disabled")
+
+    def parse_args(self):
+        """Parse command line arguments."""
+        return self.init_args().parse_args(sys.argv[1:])
 
     def check_mode_compatibility(self):
         """Check mode compatibility"""

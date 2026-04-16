@@ -15,11 +15,10 @@ Just a stupid plugin to display the help screen.
 from itertools import chain
 
 from glances import __version__, psutil_version
-from glances.globals import iteritems
 from glances.plugins.plugin.model import GlancesPluginModel
 
 
-class PluginModel(GlancesPluginModel):
+class HelpPlugin(GlancesPluginModel):
     """Glances help plugin."""
 
     def __init__(self, args=None, config=None):
@@ -64,6 +63,7 @@ class PluginModel(GlancesPluginModel):
                 ('sort_auto', msg_col.format('a', 'Automatically')),
                 ('sort_cpu', msg_col.format('c', 'CPU%')),
                 ('sort_io_rate', msg_col.format('i', 'I/O rate')),
+                ('sort_cpu_num', msg_col.format('o', 'CPU core number')),
                 ('sort_mem', msg_col.format('m', 'MEM%')),
                 ('sort_process_name', msg_col.format('p', 'Process name')),
                 ('sort_cpu_times', msg_col.format('t', 'TIME')),
@@ -172,7 +172,7 @@ class PluginModel(GlancesPluginModel):
         #
         shortcuts = []
         collecting = False
-        for k, v in iteritems(self.view_data):
+        for k, v in self.view_data.items():
             if collecting:
                 pass
             elif k == 'header_sort':

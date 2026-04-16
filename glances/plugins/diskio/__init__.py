@@ -42,6 +42,24 @@ fields_description = {
         'rate': True,
         'unit': 'byte',
     },
+    'read_time': {
+        'description': 'Time spent reading.',
+        'rate': True,
+        'unit': 'millisecond',
+    },
+    'write_time': {
+        'description': 'Time spent writing.',
+        'rate': True,
+        'unit': 'millisecond',
+    },
+    'read_latency': {
+        'description': 'Mean time spent reading per operation.',
+        'unit': 'millisecond',
+    },
+    'write_latency': {
+        'description': 'Mean time spent writing per operation.',
+        'unit': 'millisecond',
+    },
 }
 
 # Define the history items list
@@ -51,7 +69,7 @@ items_history_list = [
 ]
 
 
-class PluginModel(GlancesPluginModel):
+class DiskioPlugin(GlancesPluginModel):
     """Glances disks I/O plugin.
 
     stats is a list
@@ -94,6 +112,9 @@ class PluginModel(GlancesPluginModel):
         # Update the stats
         if self.input_method == 'local':
             stats = self.update_local()
+
+            # Compute latency (need rate stats, so should be done after decorator)
+            stats = self.update_latency(stats)
         else:
             stats = self.get_init_value()
 
@@ -101,6 +122,23 @@ class PluginModel(GlancesPluginModel):
         self.stats = stats
 
         return self.stats
+
+    def update_latency(self, stats):
+        """Update the latency stats."""
+        # Compute read/write latency if we have the rate stats
+        for stat in stats:
+            # Compute read/write latency if we have the rate stats
+            if 'read_time_rate_per_sec' in stat and stat.get("read_count_rate_per_sec", 0) > 0:
+                stat["read_latency"] = int(stat["read_time_rate_per_sec"] / stat["read_count_rate_per_sec"])
+            else:
+                stat["read_latency"] = 0
+
+            if 'write_time_rate_per_sec' in stat and stat.get("write_count_rate_per_sec", 0) > 0:
+                stat["write_latency"] = int(stat["write_time_rate_per_sec"] / stat["write_count_rate_per_sec"])
+            else:
+                stat["write_latency"] = 0
+
+        return stats
 
     @GlancesPluginModel._manage_rate
     def update_local(self):
@@ -143,20 +181,31 @@ class PluginModel(GlancesPluginModel):
         # Call the father's method
         super().update_views()
 
-        # Add specifics information
         # Alert
         for i in self.get_raw():
-            # Skip alert if no timespan to measure
-            if 'read_bytes_rate_per_sec' not in i or 'write_bytes_rate_per_sec' not in i:
-                continue
-
             disk_real_name = i['disk_name']
-            alert_rx = self.get_alert(i['read_bytes'], header=disk_real_name + '_rx')
-            alert_tx = self.get_alert(i['write_bytes'], header=disk_real_name + '_tx')
+
+            # # Skip alert if no timespan to measure
+            # if not i.get('read_bytes_rate_per_sec') or not i.get('write_bytes_rate_per_sec'):
+            #     continue
+
+            # Decorate the bitrate with the configuration file
+            alert_rx = self.get_alert(i['read_bytes'], header='rx', action_key=disk_real_name)
+            alert_tx = self.get_alert(i['write_bytes'], header='tx', action_key=disk_real_name)
             self.views[i[self.get_key()]]['read_bytes']['decoration'] = alert_rx
-            self.views[i[self.get_key()]]['read_bytes_rate_per_sec']['decoration'] = alert_rx
             self.views[i[self.get_key()]]['write_bytes']['decoration'] = alert_tx
-            self.views[i[self.get_key()]]['write_bytes_rate_per_sec']['decoration'] = alert_tx
+
+            # Decorate the latency with the configuration file
+            # Try to get the read/write latency for the current disk
+            alert_latency_rx = self.get_alert(i['read_latency'], header='rx_latency', action_key=disk_real_name)
+            alert_latency_tx = self.get_alert(i['write_latency'], header='tx_latency', action_key=disk_real_name)
+            # If the alert is not defined, use the default one
+            if alert_latency_rx == 'DEFAULT':
+                alert_latency_rx = self.get_alert(i['read_latency'], header='rx_latency')
+            if alert_latency_tx == 'DEFAULT':
+                alert_latency_tx = self.get_alert(i['write_latency'], header='tx_latency')
+            self.views[i[self.get_key()]]['read_latency']['decoration'] = alert_latency_rx
+            self.views[i[self.get_key()]]['write_latency']['decoration'] = alert_latency_tx
 
     def msg_curse(self, args=None, max_width=None):
         """Return the dict to display in the curse interface."""
@@ -178,10 +227,15 @@ class PluginModel(GlancesPluginModel):
         # Header
         msg = '{:{width}}'.format('DISK I/O', width=name_max_width)
         ret.append(self.curse_add_line(msg, "TITLE"))
-        if args.diskio_iops:
+        if args and args.diskio_iops:
             msg = '{:>8}'.format('IOR/s')
             ret.append(self.curse_add_line(msg))
             msg = '{:>7}'.format('IOW/s')
+            ret.append(self.curse_add_line(msg))
+        elif args and args.diskio_latency:
+            msg = '{:>8}'.format('ms/opR')
+            ret.append(self.curse_add_line(msg))
+            msg = '{:>7}'.format('ms/opW')
             ret.append(self.curse_add_line(msg))
         else:
             msg = '{:>8}'.format('R/s')
@@ -202,7 +256,7 @@ class PluginModel(GlancesPluginModel):
                 disk_name = disk_name[:name_max_width] + '_'
             msg = '{:{width}}'.format(nativestr(disk_name), width=name_max_width + 1)
             ret.append(self.curse_add_line(msg))
-            if args.diskio_iops:
+            if args and args.diskio_iops:
                 # count
                 txps = self.auto_unit(i.get('read_count_rate_per_sec', None))
                 rxps = self.auto_unit(i.get('write_count_rate_per_sec', None))
@@ -216,6 +270,22 @@ class PluginModel(GlancesPluginModel):
                 ret.append(
                     self.curse_add_line(
                         msg, self.get_views(item=i[self.get_key()], key='write_count', option='decoration')
+                    )
+                )
+            elif args and args.diskio_latency:
+                # latency (mean time spent reading/writing per operation)
+                txps = self.auto_unit(i.get('read_latency', None), low_precision=True)
+                rxps = self.auto_unit(i.get('write_latency', None), low_precision=True)
+                msg = f'{txps:>7}'
+                ret.append(
+                    self.curse_add_line(
+                        msg, self.get_views(item=i[self.get_key()], key='read_latency', option='decoration')
+                    )
+                )
+                msg = f'{rxps:>7}'
+                ret.append(
+                    self.curse_add_line(
+                        msg, self.get_views(item=i[self.get_key()], key='write_latency', option='decoration')
                     )
                 )
             else:

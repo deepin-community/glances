@@ -10,7 +10,7 @@
 
 import copy
 
-from glances.plugins.processlist import PluginModel as GlancesProcessListPluginModel
+from glances.plugins.processlist import ProcesslistPlugin
 from glances.processes import glances_processes
 
 # Fields description
@@ -75,7 +75,7 @@ fields_description = {
 }
 
 
-class PluginModel(GlancesProcessListPluginModel):
+class ProgramlistPlugin(ProcesslistPlugin):
     """Glances' processes plugin.
 
     stats is a list
@@ -137,6 +137,10 @@ class PluginModel(GlancesProcessListPluginModel):
         """Init the plugin."""
         super().__init__(args=args, config=config)
 
+    def load(self, args, config):
+        """Load already done in processlist"""
+        pass
+
     def get_key(self):
         """Return the key of the list."""
         return 'name'
@@ -160,6 +164,10 @@ class PluginModel(GlancesProcessListPluginModel):
         self.stats = stats
 
         return self.stats
+
+    def get_api(self):
+        """Return the sorted processes list for the API."""
+        return glances_processes.get_list(sorted=True, as_programs=True)
 
     def _get_process_curses_nprocs(self, p, selected, args):
         """Return process NPROCS curses"""

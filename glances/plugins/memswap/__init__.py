@@ -10,7 +10,6 @@
 
 import psutil
 
-from glances.globals import iterkeys
 from glances.plugins.plugin.model import GlancesPluginModel
 from glances.timer import getTimeSinceLastUpdate
 
@@ -51,7 +50,7 @@ snmp_oid = {
 items_history_list = [{'name': 'percent', 'description': 'Swap memory usage', 'y_unit': '%'}]
 
 
-class PluginModel(GlancesPluginModel):
+class MemswapPlugin(GlancesPluginModel):
     """Glances swap memory plugin.
 
     stats is a dict
@@ -125,7 +124,7 @@ class PluginModel(GlancesPluginModel):
                     self.reset()
                     return stats
 
-                for key in iterkeys(stats):
+                for key in stats:
                     if stats[key] != '':
                         stats[key] = float(stats[key]) * 1024
 

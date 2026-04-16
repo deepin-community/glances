@@ -1,6 +1,382 @@
 ==============================================================================
                                 Glances ChangeLog
-============================================================================
+==============================================================================
+
+=============
+Version 4.5.3
+=============
+
+Bug corrected:
+
+* Internal Server Error (Web Server Mode) #3502
+* Container plugin crashes with docker.errors.NullResource on Podman pod infra containers #3498
+* [ALERTS] Sometime the top process list is not the good one #3481
+
+Enhancements:
+
+* Support for LXC/LXD containers #3480
+* Add export to ClickHouse #3320
+
+Security patches:
+
+* Command Injection via Dynamic Configuration Values - Mitigate CVE-2026-33641
+* Cross-Origin System Information Disclosure via XML-RPC Server CORS Wildcard - Mitigate CVE-2026-33533
+
+Continious integration and documentation:
+
+* Use sys.executable in the testsuite #3497
+* Add unit tests for LXD container engine #3487
+* Replace Py-Spy per Memray for FlameGraph generation
+* Make the WebUI build before the packages and Docker images build
+* Harden GitHub Actions workflows: minimal permissions, SHA pins, timeouts
+
+Thanks to all the contributors for this version: Christian Rishøj, Jeongwoo Kim,
+Ofek Gabay, Steve Kowalik, Tanishq Shah, Mithun M.
+
+=============
+Version 4.5.2
+=============
+
+Bug corrected:
+
+* System display error on "little" terminal #3469
+
+Security patches:
+
+* Default CORS Configuration Allows Cross-Origin Credential Theft - Correct CVE-2026-32610
+* Incomplete Secrets Redaction: /api/v4/args Endpoint Leaks Password Hash and SNMP Credentials - Correct CVE-2026-32609
+* REST/WebUI Lacks Host Validation and Remains Exposed to DNS Rebinding - Correct CVE-2026-32632
+* Unauthenticated API Exposure / Add warning message on startup - Correct CVE-2026-32596
+* SQL Injection in DuckDB Export via Unparameterized DDL Statements - Correct CVE-2026-32611
+* Command Injection via Process Names in Action Command Templates - Correct CVE-2026-32608
+* Central Browser Autodiscovery Leaks Reusable Credentials to Zeroconf-Spoofed Servers - Correct CVE-2026-32634
+* Browser API Exposes Reusable Downstream Credentials via  - Correct CVE-2026-32633
+
+Breaking changes: This release addresses 8 security vulnerabilities (see below).
+Several of the mitigations change observable behaviour. Users who run Glances in
+web server or API mode (``-w`` / ``--enable-webserver``) should read the items below before upgrading.
+
+* [CVE-2026-32632] Host header validation is now enforced on the
+  built-in web server. Requests whose ``Host`` header does not match
+  ``localhost`` or ``127.0.0.1`` will be rejected with HTTP 400 by
+  default. Users accessing Glances through a reverse proxy, a custom
+  hostname, or a non-loopback IP address must declare the allowed
+  values with the new ``allowed_hosts`` key in the ``[outputs]``
+  section of ``glances.conf`` (comma-separated list). This was
+  already required for the MCP server since 4.5.1; it now also
+  applies to the main REST/WebUI server.
+
+* [CVE-2026-32610] The default CORS policy is now restrictive.
+  Previously, the server replied with ``Access-Control-Allow-Origin: *``
+  which allowed any web page to issue credentialed cross-origin requests
+  against the API. The wildcard is removed. Users running third-party
+  web dashboards or custom front-ends on a different origin must
+  explicitly list allowed origins with the ``cors_origins`` key in the
+  ``[outputs]`` section of ``glances.conf``.
+
+* [CVE-2026-32609] Sensitive fields are now redacted on unauthenticated
+  API responses. The ``/api/4/args`` and ``/api/4/config`` endpoints no
+  longer return password hashes, SSL key paths, or SNMP community
+  strings to callers that have not authenticated. Scripts and
+  integrations that relied on reading these values from the API must
+  now authenticate (token or password) to receive them.
+
+* [CVE-2026-32633, CVE-2026-32634] The Browser (multi-server mode)
+  no longer forwards configured credentials to remote Glances servers,
+  whether discovered via Zeroconf or listed in the ``[serverlist]``
+  section. Credentials are only sent after the user explicitly logs in
+  to an individual server. Automated setups that relied on transparent
+  credential propagation must switch to per-server authentication.
+
+* [CVE-2026-32596] A WARNING is now printed to stdout at startup when
+  the REST API is running without authentication (no ``--password`` and
+  no API token configured). This is an informational message; the
+  unauthenticated mode itself is unchanged and remains the default for
+  private-network deployments. Startup scripts or monitoring pipelines
+  that treat any stderr/stdout output as a failure may need to be
+  updated.
+
+* [CVE-2026-32611] The DuckDB export module now uses parameterized DDL
+  statements. Table names derived from plugin or metric names are
+  sanitized before use. Existing DuckDB databases whose table names
+  contained characters that were previously interpolated verbatim may
+  need to be recreated.
+
+* [CVE-2026-32608] Process names used in ``[action]`` command templates
+  are now shell-escaped before substitution. Templates that relied on
+  unescaped special characters in process names to construct compound
+  shell expressions will no longer behave as before.
+
+Thanks to @psyberck for the UI patch and @DhiyaneshGeek / @restriction for CVEs reports.
+
+
+=============
+Version 4.5.1
+=============
+
+Bug corrected:
+
+* DiskIO plugin crashes Glances on OpenBSD (regression from 4.5.0.5) #3452
+* DiskIO plugin does not handle empty args in msg_curse() #3429
+* Filesystem plugin KeyError on /etc/hostname in get_view() #3470
+* Sensors show/hide by alias name not working #3439
+* SMART plugin non-uniform key types cause TypeError with InfluxDB2 export #3449
+* WebUI displays incorrect temperature values in Fahrenheit mode #3450
+* AMD GPU plugin PermissionError on /usr/share/libdrm/amdgpu.ids crashes Glances at startup (Snap) #3456
+* NVIDIA GPU not detected under Snap strict confinement #3292
+* MCP server rejects external host connections due to DNS rebinding protection #3467
+* --enable-history flag silently ignored #3416
+
+Enhancements:
+
+* Intel GPU monitoring support added to GPU plugin #994
+* Docker container health status and alerts #3402
+* Add libvirt client to Docker image for VM monitoring #3436
+* Add DeviceName key to SMART plugin device stats #3457
+* All plugins now expose min/max/mean statistics since startup #3462
+* Improved CPU plugin display on macOS (graceful handling of unavailable fields) #3464
+
+Security patches:
+
+* Unauthenticated Configuration Secrets Exposure - Correct CVE-2026-30928
+* SQL Injection via Process Names in TimescaleDB Export - Correct CVE-2026-30930
+
+Code quality:
+
+* JSON serializer hardened with comprehensive type normalization #3454
+* Reduce cyclomatic complexity of split_esc() in globals #3461
+* Add plugin tests to Makefile #3446
+* Fix code block formatting in documentation #3447
+
+Thanks to all the contributors for this version: @YamiYukiSenpai, @amzon-ex,
+@axodentally, @fpusan, @janusn, @kleinmatic, @lcheylus, @lubomir-moric, @mark-rahal,
+@mikemhenry, @Ambika-Patidar, @AbdelhamidKhald, @Julietmgbole,
+@sdoshi2061, @cjlindem, @theamanrawat
+
+===============
+Version 4.5.0.5
+===============
+
+Bugs corrected:
+
+* Regression in the process selection with Glances 4.5.0 #3444
+* [Docker image] Basic Auth no longer works in browser after adding Bearer token support #3434
+* Error fetching ip with urlopen_auth() - extra function argument #3438
+
+===============
+Version 4.5.0.4
+===============
+
+Continious integration:
+
+* Remove cassandra-driver dependency because it breaks build on Docker Alpine image
+
+===============
+Version 4.5.0.2
+===============
+
+Bugs corrected:
+
+* NPU plugin makes Glances 4.5.0.1 crashing on start #3425
+* Glances 4.5.0.1 not reporting docker container details #3426
+
+===============
+Version 4.5.0.1
+===============
+
+Bugs corrected:
+
+* Docker image for Glances release 4.5.0 failed to start if no [outputs] section in the glances.conf file #3424
+
+=============
+Version 4.5.0
+=============
+
+Enhancements:
+
+* NPU Monitoring #2694
+* Implement API Token for the ResfulAPI server #1995
+* ZFS Monitoring #873
+* NVME support #3355
+* Add export to DuckDB database #3205
+* Add CPU core number field to processlist #3411
+* Add support for escape ':' in alias name #3345
+
+Bugs corrected:
+
+* CPU Speed / Max Speed wrong in WebUI #3134
+* TIME+ in Web UI Shows Incorrect Large Values #3401
+* ERROR: Exception in ASGI application KeyErro used #3409
+* InfluxDB Exports for AMPs can mismatch types for result field #3419
+* Fix quicklook in case psutil.cpu_freq().max=0.0 #3379
+* Get amdgpu name from amdgpu.id #3376
+* Fetch option is not compliant with client/server mode #3352
+* Glances won't start when using snmp discovery with parameter -c #3354
+* Avoid empty space when Quicklook plugin is displayed #3413
+
+Continious integration and documentation:
+
+* Reduce code complexity #2801
+* Docker GPU not showing up #3393
+* Potential fix for code scanning alert no. 47: Clear-text logging of sensitive information #3418
+* Test: Add comprehensive unit tests for core plugins #3422
+* README: Syntax fix (missing space) #3420
+* fix(security): resolve B701 (Jinja2) and B113 (timeout) vulnerabilities #3383
+* Update license specification to SPDX format #3381
+* Make a simple Jupyter notebook for the Glances API #3350
+* Improve Docker build pipeline #3336
+
+Thanks to all contributors and bug reporters !
+
+Special thanks to:
+
+- ffleischer
+- drake7707
+- Ambika-Patidar
+
+=============
+Version 4.4.1
+=============
+
+Bug corrected:
+
+* Restful API issue after a while (stats are no more updated) #3333
+
+=============
+Version 4.4.0
+=============
+
+Breaking changes:
+
+* A new Python API is now available to use Glances as a Python lib in your hown development #3237
+* In the process list, the long command line is now truncated by default. Use the arrow keys to show the full command line. SHIFT + arrow keys are used to switch between column sorts (TUI).
+* Prometheus export format is now more user friendly (see detail in #3283)
+
+Enhancements:
+
+* Make a Glances API in order to use Glances as a Python lib #3237
+* Add a new --fetch (neofetch like) option to display a snapshot of the current system status #3281
+* Show used port in container section #2054
+* Show long command line with arrow key #1553
+* Sensors plugin refresh by default every 10 seconds
+* Do not call update if a call is done to a specific plugin through the API #3033
+* [UI] Process virtual memory display can be disable by configuration #3299
+* Choose between used or available in the mem plugin #3288
+* [Experimental] Add export to DuckDB database #3205
+* Add Disk I/O Latency stats #1070
+* Filter fields to export #3258
+* Remove .keys() from loops over dicts #3253
+* Remove iterator helpers #3252
+
+Bug corrected:
+
+* [MACOS] Glances not showing Processes on MacOS #3100
+* Last dev build broke Homepage API calls ? only 1 widget still working #3322
+* Cloud plugin always generate communication with 169.254.169.254, even if the plugin is disabled #3316
+* API response delay (3+ minutes) when VMs are running #3317
+* [WINDOWS] Glances do not display CPU stat correctly #3155
+* Glances hangs if network device (NFS) is no available #3290
+* Fix prometheus export format #3283
+* Issue #3279 zfs cache and memory math issues #3289
+* [MACOS]  Glances crashes when I try to filter #3266
+* Glances hang when killing process with muliple CTRL-C #3264
+* Issues after disabling system and processcount plugins #3248
+* Headers missing from predefined fields in TUI browser machine list #3250
+* Add another check for the famous Netifaces issue - Related to #3219
+* Key error 'type' in server_list_static.py (load_server_list) #3247
+
+Continious integration and documentation:
+
+* Glances now use uv for the dev environment #3025
+* Glances is compatible with Python 3.14 #3319
+* Glances provides requirements files with specific versions for each release
+* Requirements files are now generated dynamically with the make requirements or requirements-upgrade target
+* Add duplicate line check in pre-commit (strange behavor with some VScode extension)
+* Solve issue with multiprocessing exception with Snap package
+* Add a test script for identify CPU consumption of sensor plugin
+* Refactor port to take into account netifaces2
+* Correct issue with Chrome driver in WebUI unit test
+* Upgrade export test with InfluxDB 1.12
+* Fix typo of --export-process-filter help message #3314
+* In the outdated feature, catch error message if Pypi server not reachable
+* Add unit test for auto_unit
+* Label error in docs #3286
+* Put WebUI conf generator in a dedicated script
+* Refactor the Makefile to generate WebUI config file for all webui targets
+* Update sensors documentation #3275
+* Update docker compose env quote #3273
+* Update docker-compose.yml #3249
+* Update API doc generation
+* Update README with nice icons #3236
+* Add documentation for WebUI test
+
+Thanks to all contributors and bug reporters !
+
+Special thanks to:
+- Adi
+- Bennett Kanuka
+- Tim Potter
+- Ariel Otilibili
+-	Boris Okassa
+-	Lawrence
+-	Shohei YOSHIDA
+-	jmwallach
+-	korn3r
+
+=============
+Version 4.3.3
+=============
+
+Bug corrected:
+
+* Something in 4.3.2 broke the home assistant add-on for Glances #3238
+
+Thanks to the FastAPI and Home Assistant community for the support.
+
+=============
+Version 4.3.2
+=============
+
+Enhancements:
+
+* Add stats about running VMS (qemu/libvirt/kvm support through virsh) #1531
+* Add support for InfluxDB 3 Core #3182
+* (postgre)SQL export support / TimeScaleDB #2814
+* CSV column name now include the plugin name - Related to #2394
+* Make all results from amps plugins exportable #2394
+* Make --stdout (csv and json) compliant with client/server mode #3235
+* API history endpoints shows times without timezone #3218
+* FR: Sort Sensors my name in proper number order #3132
+* In the FS module, do not display threshold for volume mounted in 'ro' (read-only) #3143
+* Add a new field in the process list to identifie Zombie process #3178
+* Update plugin containers display and order #3186
+* Implement a basic memory cache with TTL for API call (set to ~1 second) #3202
+* Add container inactive_file & limit to InfluxDB2 export #3206
+
+Bug corrected:
+
+* [GPU] AMD Plugin: Operation not permitted #3125
+* Container memory stats not displayed #3142
+* [WEBUI] Irix mode (per core instead of per CPU percentage) not togglable #3158
+* Related to iteritems, itervalues, and iterkeys are not more needed in Python 3 #3181
+* Glances Central Browser should use name instead of IP adress for redirection #3103
+* Glances breaks if Podman container is started while it is running #3199
+
+Continious integration and documentation:
+
+* Add a new option --print-completion to generate shell tab completion - #3111
+* Improve Restful API documentation embeded in FastAPI #2632
+* Upgrade JS libs #3147
+* Improve unittest for CSV export #3150
+* Improve unittest for InfluxDB plugin #3149
+* Code refactoring - Rename plugin class to <Plugin name>Plugin instead of PluginModel #3169
+* Refactor code to limit the complexity of update_views method in plugins #3171
+
+Thanks to all contributors and bug reporters !
+
+Special thanks to:
+- Ariel Otilibili
+- kenrmayfield
 
 =============
 Version 4.3.1
@@ -369,7 +745,7 @@ See release note in Wiki format: https://github.com/nicolargo/glances/wiki/Glanc
 **BREAKING CHANGES:**
 
 * The minimal Python version is 3.8
-* The Glances API version 3 is replaced by the version 4. So Restfull API URL is now /api/4/ #2610
+* The Glances API version 3 is replaced by the version 4. So Restful API URL is now /api/4/ #2610
 * Alias definition change in the configuration file #1735
 
 Glances version 3.x and lower:
@@ -394,9 +770,9 @@ Minimal requirements for Glances version 4 are:
 * packaging
 * ujson
 * pydantic
-* fastapi (for WebUI / RestFull API)
-* uvicorn (for WebUI / RestFull API)
-* jinja2 (for WebUI / RestFull API)
+* fastapi (for WebUI / RestFul API)
+* uvicorn (for WebUI / RestFul API)
+* jinja2 (for WebUI / RestFul API)
 
 Majors changes between Glances version 3 and version 4:
 
@@ -456,7 +832,7 @@ Bug corrected:
 CI and documentation:
 
 * New logo for Glances version 4.0 #2713
-* Update api.rst documentation #2496
+* Update api-restful.rst documentation #2496
 * Change Renovate config #2729
 * Docker compose password unrecognized arguments when applying docs #2698
 * Docker includes OS Release Volume mount info #2473
@@ -834,7 +1210,7 @@ Bugs corrected:
 * Threading.Event.isSet is deprecated in Python 3.10 #2017
 * Fix code scanning alert - Clear-text logging of sensitive information security #2006
 * The gpu temperature unit are displayed incorrectly in web ui bug #2002
-* Doc for 'alert' Restfull/JSON API response documentation #1994
+* Doc for 'alert' Restful/JSON API response documentation #1994
 * Show the spinning state of a disk documentation #1993
 * Web server status check endpoint enhancement #1988
 * --time parameter being ignored for client/server mode bug #1978
@@ -929,7 +1305,7 @@ Bugs corrected:
 * [3.2.0/3.2.1] keybinding not working anymore #1904
 * InfluxDB/InfluxDB2 Export object has no attribute hostname #1899
 
-Documentation: The "make docs" generate RestFull/API documentation file.
+Documentation: The "make docs" generate RestFul/API documentation file.
 
 ===============
 Version 3.2.1
@@ -1956,7 +2332,7 @@ Version 2.1
 * Add Glances log message (in the /tmp/glances.log file)
       The default log level is INFO, you can switch to the DEBUG mode using the -d option on the command line.
 * Add RESTful API to the Web server mode
-      RESTful API doc: https://github.com/nicolargo/glances/wiki/The-Glances-RESTFULL-JSON-API
+      RESTful API doc: https://github.com/nicolargo/glances/wiki/The-Glances-RESTFUL-JSON-API
 * Improve SNMP fallback mode for Cisco IOS, VMware ESXi
 * Add --theme-white feature to optimize display for white background
 * Experimental history feature (--enable-history option on the command line)

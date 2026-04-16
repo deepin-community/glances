@@ -1,13 +1,15 @@
 <template>
-    <section class="plugin" id="diskio" v-if="hasDisks">
+    <section v-if="hasDisks" id="diskio" class="plugin">
         <table class="table table-sm table-borderless margin-bottom">
             <thead>
                 <tr>
                     <th scope="col">DISK I/O</th>
-                    <th scope="col" class="text-end w-25" v-show="!args.diskio_iops">Rps</th>
-                    <th scope="col" class="text-end w-25" v-show="!args.diskio_iops">Wps</th>
-                    <th scope="col" class="text-end w-25" v-show="args.diskio_iops">IORps</th>
-                    <th scope="col" class="text-end w-25" v-show="args.diskio_iops">IOWps</th>
+                    <th v-show="!args.diskio_iops && !args.diskio_latency" scope="col" class="text-end w-25">Rps</th>
+                    <th v-show="!args.diskio_iops && !args.diskio_latency" scope="col" class="text-end w-25">Wps</th>
+                    <th v-show="args.diskio_latency" scope="col" class="text-end w-25">ms/opR</th>
+                    <th v-show="args.diskio_latency" scope="col" class="text-end w-25">ms/opW</th>
+                    <th v-show="args.diskio_iops" scope="col" class="text-end w-25">IORps</th>
+                    <th v-show="args.diskio_iops" scope="col" class="text-end w-25">IOWps</th>
                 </tr>
             </thead>
             <tbody>
@@ -15,18 +17,26 @@
                     <td scope="row" class="text-truncate">
                         {{ $filters.minSize(disk.alias ? disk.alias : disk.name, 16) }}
                     </td>
-                    <td class="text-end w-25" :class="getDecoration(disk.name, 'write_bytes_rate_per_sec')"
-                        v-show="!args.diskio_iops">
+                    <td v-show="!args.diskio_iops && !args.diskio_latency" class="text-end w-25"
+                        :class="getDecoration(disk.name, 'write_bytes_rate_per_sec')">
                         {{ disk.bitrate.txps }}
                     </td>
-                    <td class="text-end w-25" :class="getDecoration(disk.name, 'read_bytes_rate_per_sec')"
-                        v-show="!args.diskio_iops">
+                    <td v-show="!args.diskio_iops && !args.diskio_latency" class="text-end w-25"
+                        :class="getDecoration(disk.name, 'read_bytes_rate_per_sec')">
                         {{ disk.bitrate.rxps }}
                     </td>
-                    <td class="text-end w-25" v-show="args.diskio_iops">
+                    <td v-show="args.diskio_latency" class="text-end w-25"
+                        :class="getDecoration(disk.name, 'write_latency')">
+                        {{ disk.latency.txps }}
+                    </td>
+                    <td v-show="args.diskio_latency" class="text-end w-25"
+                        :class="getDecoration(disk.name, 'read_latency')">
+                        {{ disk.latency.rxps }}
+                    </td>
+                    <td v-show="args.diskio_iops" class="text-end w-25">
                         {{ disk.count.txps }}
                     </td>
-                    <td class="text-end w-25" v-show="args.diskio_iops">
+                    <td v-show="args.diskio_iops" class="text-end w-25">
                         {{ disk.count.rxps }}
                     </td>
                 </tr>
@@ -36,63 +46,78 @@
 </template>
 
 <script>
-import { orderBy } from 'lodash';
-import { store } from '../store.js';
-import { bytes } from '../filters.js';
+import { orderBy } from "lodash";
+import { bytes } from "../filters.js";
+import { store } from "../store.js";
 
 export default {
-    props: {
-        data: {
-            type: Object
-        }
-    },
-    data() {
-        return {
-            store
-        };
-    },
-    computed: {
-        args() {
-            return this.store.args || {};
-        },
-        stats() {
-            return this.data.stats['diskio'];
-        },
-        view() {
-            return this.data.views['diskio'];
-        },
-        disks() {
-            const disks = this.stats.map((diskioData) => {
-                return {
-                    name: diskioData['disk_name'],
-                    alias: diskioData['alias'] !== undefined ? diskioData['alias'] : null,
-                    bitrate: {
-                        txps: bytes(diskioData['read_bytes_rate_per_sec']),
-                        rxps: bytes(diskioData['write_bytes_rate_per_sec'])
-                    },
-                    count: {
-                        txps: bytes(diskioData['read_count_rate_per_sec']),
-                        rxps: bytes(diskioData['write_count_rate_per_sec'])
-                    }
-                };
-            }).filter(disk => {
-                const readBytesRate = this.view[disk.name]['read_bytes_rate_per_sec'];
-                const writeBytesRate = this.view[disk.name]['write_bytes_rate_per_sec'];
-                return (!readBytesRate || readBytesRate.hidden === false) && (!writeBytesRate || writeBytesRate.hidden === false);
-            });
-            return orderBy(disks, ['name']);
-        },
-        hasDisks() {
-            return this.disks.length > 0;
-        }
-    },
-    methods: {
-        getDecoration(diskName, field) {
-            if (this.view[diskName][field] == undefined) {
-                return;
-            }
-            return this.view[diskName][field].decoration.toLowerCase();
-        }
-    }
+	props: {
+		data: {
+			type: Object,
+		},
+	},
+	data() {
+		return {
+			store,
+		};
+	},
+	computed: {
+		args() {
+			return this.store.args || {};
+		},
+		stats() {
+			return this.data.stats["diskio"];
+		},
+		view() {
+			return this.data.views["diskio"];
+		},
+		disks() {
+			const disks = this.stats
+				.map((diskioData) => {
+					return {
+						name: diskioData["disk_name"],
+						alias:
+							diskioData["alias"] !== undefined ? diskioData["alias"] : null,
+						bitrate: {
+							txps: bytes(diskioData["read_bytes_rate_per_sec"]),
+							rxps: bytes(diskioData["write_bytes_rate_per_sec"]),
+						},
+						count: {
+							txps: bytes(diskioData["read_count_rate_per_sec"]),
+							rxps: bytes(diskioData["write_count_rate_per_sec"]),
+						},
+						latency: {
+							txps: bytes(diskioData["read_latency"]),
+							rxps: bytes(diskioData["write_latency"]),
+						},
+					};
+				})
+				.filter((disk) => {
+					const readBytesRate = this.view[disk.name]["read_bytes_rate_per_sec"];
+					const writeBytesRate =
+						this.view[disk.name]["write_bytes_rate_per_sec"];
+					return (
+						(!readBytesRate || readBytesRate.hidden === false) &&
+						(!writeBytesRate || writeBytesRate.hidden === false)
+					);
+				});
+			return orderBy(disks, ["name"]);
+		},
+		hasDisks() {
+			return this.disks.length > 0;
+		},
+	},
+	methods: {
+		getDecoration(diskName, field) {
+			if (this.view[diskName][field] == undefined) {
+				if (this.view[field] == undefined) {
+					return;
+				} else {
+					return this.view[field].decoration.toLowerCase();
+				}
+			}
+			return this.view[diskName][field].decoration.toLowerCase();
+		},
+	},
 };
 </script>

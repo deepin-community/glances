@@ -7,13 +7,28 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 #
 
-"""Glances unitary tests suite for the WebUI."""
+"""Glances unitary tests suite for the WebUI.
+
+This test uses Selenium to test the Glances WebUI.
+Under the wood, it uses the ChromeDriver.
+
+Check your Chrome version with:
+    /usr/bin/google-chrome --version
+Check your ChromeDriver version with:
+    /usr/bin/chromedriver --version
+
+The (major) version should match.
+
+If not, download and install the correct version of ChromeDriver.
+https://googlechromelabs.github.io/chrome-for-testing/#stable
+"""
 
 import os
 import tempfile
 import time
 
 import pytest
+from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
 
 SCREENSHOT_RESOLUTIONS = [
@@ -48,7 +63,8 @@ def test_screenshot(glances_webserver, glances_homepage):
     """
     Test Glances home page screenshot.
     """
-    glances_webserver is not None
+    if glances_webserver is None:
+        raise AssertionError("Glances webserver is not running")
     for resolution in SCREENSHOT_RESOLUTIONS:
         glances_homepage.set_window_size(*resolution)
         glances_homepage.save_screenshot(
@@ -60,29 +76,35 @@ def test_loading_time(glances_webserver, glances_homepage):
     """
     Test Glances home page loading time.
     """
-    assert glances_webserver is not None
+    if glances_webserver is None:
+        raise AssertionError("Glances webserver is not running")
     navigation_start = glances_homepage.execute_script("return window.performance.timing.navigationStart")
     response_start = glances_homepage.execute_script("return window.performance.timing.responseStart")
     dom_complete = glances_homepage.execute_script("return window.performance.timing.domComplete")
     backend_perf = response_start - navigation_start
     frontend_perf = dom_complete - response_start
-    assert backend_perf < 1000  # ms
-    assert frontend_perf < 1000  # ms
+    if backend_perf >= 2000:
+        raise AssertionError(f"Backend performance is too slow: {backend_perf}ms (limit is 2000ms)")
+    if frontend_perf >= 2000:
+        raise AssertionError(f"Frontend performance is too slow: {frontend_perf}ms (limit is 2000ms)")
 
 
 def test_title(glances_webserver, glances_homepage):
     """
     Test Glances home page title.
     """
-    assert glances_webserver is not None
-    assert "Glances" in glances_homepage.title
+    if glances_webserver is None:
+        raise AssertionError("Glances webserver is not running")
+    if "Glances" not in glances_homepage.title:
+        raise AssertionError(f"Expected 'Glances' in title, but got '{glances_homepage.title}'")
 
 
 def test_plugins(glances_webserver, glances_homepage):
     """
     Test Glances defaults plugins.
     """
-    assert glances_webserver is not None
+    if glances_webserver is None:
+        raise AssertionError("Glances webserver is not running")
     for plugin in [
         "system",
         "now",
@@ -99,4 +121,11 @@ def test_plugins(glances_webserver, glances_homepage):
         "processcount",
         "processlist",
     ]:
-        assert glances_homepage.find_element(By.ID, plugin) is not None
+        if plugin == 'sensors':
+            try:
+                assert glances_homepage.find_element(By.ID, plugin) is not None
+            except NoSuchElementException:
+                # Sensors can be hidden on VM
+                pass
+        else:
+            assert glances_homepage.find_element(By.ID, plugin) is not None

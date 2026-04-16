@@ -10,10 +10,11 @@
 """Glances unitary tests suite for the RESTful API."""
 
 import numbers
-import os
 import shlex
 import subprocess
+import sys
 import time
+import types
 import unittest
 
 import requests
@@ -21,6 +22,7 @@ import requests
 from glances import __version__
 from glances.globals import text_type
 from glances.outputs.glances_restful_api import GlancesRestfulApi
+from glances.timer import Counter
 
 SERVER_PORT = 61234
 API_VERSION = GlancesRestfulApi.API_VERSION
@@ -52,10 +54,7 @@ class TestGlances(unittest.TestCase):
         global pid
 
         print('INFO: [TEST_000] Start the Glances Web Server API')
-        if os.path.isfile('./venv/bin/python'):
-            cmdline = "./venv/bin/python"
-        else:
-            cmdline = "python"
+        cmdline = sys.executable
         cmdline += f" -m glances -B 0.0.0.0 -w --browser -p {SERVER_PORT} --disable-webui -C ./conf/glances.conf"
         print(f"Run the Glances Web Server on port {SERVER_PORT}")
         args = shlex.split(cmdline)
@@ -70,10 +69,32 @@ class TestGlances(unittest.TestCase):
         method = "all"
         print('INFO: [TEST_001] Get all stats')
         print(f"HTTP RESTful request: {URL}/{method}")
-        req = self.http_get(f"{URL}/{method}")
-
-        self.assertTrue(req.ok)
-        self.assertTrue(req.json(), dict)
+        # First call is not cached
+        counter_first_call = Counter()
+        first_req = self.http_get(f"{URL}/{method}")
+        self.assertTrue(first_req.ok)
+        self.assertTrue(first_req.json(), dict)
+        counter_first_call_result = counter_first_call.get()
+        # Second call (if it is in the same second) is cached
+        counter_second_call = Counter()
+        second_req = self.http_get(f"{URL}/{method}")
+        self.assertTrue(second_req.ok)
+        self.assertTrue(second_req.json(), dict)
+        counter_second_call_result = counter_second_call.get()
+        # Check if result of first call is equal to second call
+        # Note: We comment this line because on some system (like Windows CI),
+        # the stats can change between the two calls (example: network stats)
+        # self.assertEqual(first_req.json(), second_req.json(),
+        #                  "The result of the first and second call should be equal")
+        # Check cache result
+        print(
+            f"First API call took {counter_first_call_result:.2f} seconds"
+            f" and second API call (cached) took {counter_second_call_result:.2f} seconds"
+        )
+        self.assertTrue(
+            counter_second_call_result < counter_first_call_result,
+            "The second call should be cached (faster than the first one)",
+        )
 
     def test_002_pluginslist(self):
         """Plugins list."""
@@ -117,7 +138,12 @@ class TestGlances(unittest.TestCase):
                 'gpu',
                 'containers',
                 'vms',
+                'npu',
             ):
+                if isinstance(req.json(), dict) and not req.json():
+                    # Specific case for plugins that can be empty on VM (like sensors, containers...)
+                    # They return an empty dict instead of an empty list
+                    continue
                 self.assertIsInstance(req.json(), list)
                 if len(req.json()) > 0:
                     self.assertIsInstance(req.json()[0], dict)
@@ -136,7 +162,8 @@ class TestGlances(unittest.TestCase):
             self.assertTrue(req.ok)
             self.assertIsInstance(req.json(), dict)
             print(req.json()[i])
-            self.assertIsInstance(req.json()[i], numbers.Number)
+            # Value can be a number or None (for _rate in first loop)
+            self.assertIsInstance(req.json()[i], (numbers.Number, types.NoneType))
 
     def test_005_values(self):
         """Values."""

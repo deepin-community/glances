@@ -1,2 +1,8 @@
 #very long lines but they don't look that bad
+glances source: very-long-line-length-in-source-file
+
+#very long lines but they don't look that bad
 glances source: source-is-missing [docs/_static/glances-pyinstrument.html]
+
+#very long lines but they don't look that bad
+glances source: source-is-missing [docs/_static/glances-flame.html]

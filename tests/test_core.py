@@ -11,16 +11,41 @@
 """Glances unitary tests suite."""
 
 import json
+import multiprocessing
 import time
 import unittest
 from datetime import datetime
+from unittest.mock import patch
+
+# Ugly hack waiting for Python 3.10 deprecation
+try:
+    from datetime import UTC
+except ImportError:
+    from datetime import timezone
+
+    UTC = timezone.utc
 
 from glances import __version__
 from glances.events_list import GlancesEventsList
 from glances.filter import GlancesFilter, GlancesFilterList
-from glances.globals import LINUX, WINDOWS, pretty_date, string_value_to_float, subsample
+from glances.globals import (
+    BSD,
+    LINUX,
+    MACOS,
+    SUNOS,
+    WINDOWS,
+    WSL,
+    auto_unit,
+    pretty_date,
+    split_esc,
+    string_value_to_float,
+    subsample,
+)
 from glances.main import GlancesMain
 from glances.outputs.glances_bars import Bar
+from glances.plugins.fs.zfs import zfs_enable, zfs_stats
+from glances.plugins.npu import NpuPlugin
+from glances.plugins.plugin.dag import get_plugin_dependencies
 from glances.plugins.plugin.model import GlancesPluginModel
 from glances.stats import GlancesStats
 from glances.thresholds import (
@@ -31,11 +56,19 @@ from glances.thresholds import (
     GlancesThresholdWarning,
 )
 
+# Multiprocessing start method (on POSIX system)
+if LINUX or BSD or SUNOS or MACOS:
+    ctx_mp_fork = multiprocessing.get_context('fork')
+else:
+    ctx_mp_fork = multiprocessing.get_context()
+
 # Global variables
 # =================
 
 # Init Glances core
-core = GlancesMain(args_begin_at=2)
+testargs = ["glances", "-C", "./conf/glances.conf"]
+with patch('sys.argv', testargs):
+    core = GlancesMain()
 test_config = core.get_config()
 test_args = core.get_args()
 
@@ -57,6 +90,9 @@ class TestGlances(unittest.TestCase):
     def _common_plugin_tests(self, plugin):
         """Common method to test a Glances plugin
         This method is called multiple time by test 100 to 1xx"""
+
+        assert stats.args.conf_file == './conf/glances.conf', 'Configuration file not correctly set in stats'
+        # But not take into account
 
         # Reset all the stats, history and views
         plugin_instance = stats.get_plugin(plugin)
@@ -146,6 +182,11 @@ class TestGlances(unittest.TestCase):
                 self.assertGreater(
                     plugin_instance.get_raw_history(first_history_field)[1][0],
                     plugin_instance.get_raw_history(first_history_field)[0][0],
+                )
+                # Check time
+                self.assertEqual(
+                    plugin_instance.get_raw_history(first_history_field)[1][0].tzinfo,
+                    UTC,
                 )
 
             # Update stats (add third element)
@@ -299,6 +340,49 @@ class TestGlances(unittest.TestCase):
         # Check if number of processes in the list equal counter
         # self.assertEqual(total, len(stats_grab))
 
+    def test_010a_processes_cpu_num(self):
+        """Check Process cpu_num (processor) field."""
+        print('INFO: [TEST_010a] Check PROCESS cpu_num field')
+
+        # Test 1: Capability detection
+        from glances.processes import glances_processes
+
+        self.assertTrue(hasattr(glances_processes, 'disable_cpu_num'))
+        print(f'INFO: cpu_num capability - disable_cpu_num={glances_processes.disable_cpu_num}')
+
+        # Test 2: Field in displayed attributes when not disabled
+        displayed_attr = glances_processes.get_displayed_attr()
+        if glances_processes.disable_cpu_num:
+            self.assertNotIn('cpu_num', displayed_attr)
+        else:
+            self.assertIn('cpu_num', displayed_attr)
+        print(f'INFO: cpu_num in displayed_attr: {not glances_processes.disable_cpu_num}')
+
+        # Test 3: Display formatting
+        from unittest.mock import Mock
+
+        from glances.plugins.processlist import ProcesslistPlugin
+
+        plugin = ProcesslistPlugin()
+        args = Mock()
+        args.disable_irix = False
+        args.disable_cursor = False
+
+        # Test valid cpu_num value
+        result_valid = plugin._get_process_curses_cpu_num({'cpu_num': 5}, False, args)
+        self.assertEqual(result_valid.get('msg'), '  5 ')
+        self.assertEqual(len(result_valid.get('msg')), 4)
+
+        # Test None value
+        result_none = plugin._get_process_curses_cpu_num({'cpu_num': None}, False, args)
+        self.assertEqual(result_none.get('msg'), '  - ')
+
+        # Test missing key
+        result_missing = plugin._get_process_curses_cpu_num({}, False, args)
+        self.assertEqual(result_missing.get('msg'), '  - ')
+
+        print('INFO: cpu_num display formatting tests passed')
+
     def test_011_folders(self):
         """Check File System plugin."""
         # stats_to_check = [ ]
@@ -391,7 +475,7 @@ class TestGlances(unittest.TestCase):
             assert len(stats_grab) == 0
         else:
             print(stats_grab)
-            self.assertTrue(stat in stats_grab[0].keys(), msg=f'Cannot find key: {stat}')
+            self.assertTrue(stat in stats_grab[0], msg=f'Cannot find key: {stat}')
 
         print(f'INFO: SMART stats: {stats_grab}')
 
@@ -504,6 +588,155 @@ class TestGlances(unittest.TestCase):
         self.assertEqual(pretty_date(datetime(2023, 6, 1, 0, 0), datetime(2024, 1, 1, 12, 0)), '7 months')
         self.assertEqual(pretty_date(datetime(2023, 1, 1, 0, 0), datetime(2024, 1, 1, 12, 0)), 'an year')
         self.assertEqual(pretty_date(datetime(2020, 1, 1, 0, 0), datetime(2024, 1, 1, 12, 0)), '4 years')
+
+    def test_022_plugin_dag(self):
+        """Test Plugin DAG"""
+        print('INFO: [TEST_022] Plugins DAG')
+        self.assertEqual(get_plugin_dependencies('amps'), ['amps', 'alert'])
+        self.assertEqual(get_plugin_dependencies('cpu'), ['cpu', 'core', 'alert'])
+        self.assertEqual(get_plugin_dependencies('load'), ['load', 'core', 'alert'])
+        self.assertEqual(get_plugin_dependencies('processlist'), ['processlist', 'core', 'processcount', 'alert'])
+        self.assertEqual(get_plugin_dependencies('programlist'), ['programlist', 'processcount', 'alert'])
+        self.assertEqual(get_plugin_dependencies('quicklook'), ['quicklook', 'fs', 'core', 'load', 'alert'])
+        self.assertEqual(get_plugin_dependencies('vms'), ['vms', 'processcount', 'alert'])
+
+    def test_023_get_alert(self):
+        """Test get_alert function"""
+        print('INFO: [TEST_023] get_alert')
+        self.assertEqual(stats.get_plugin('cpu').get_alert(10, minimum=0, maximum=100, header='total'), 'OK_LOG')
+        self.assertEqual(stats.get_plugin('cpu').get_alert(65, minimum=0, maximum=100, header='total'), 'CAREFUL_LOG')
+        self.assertEqual(stats.get_plugin('cpu').get_alert(75, minimum=0, maximum=100, header='total'), 'WARNING_LOG')
+        self.assertEqual(stats.get_plugin('cpu').get_alert(85, minimum=0, maximum=100, header='total'), 'CRITICAL_LOG')
+
+    def test_024_split_esc(self):
+        """Test split_esc function"""
+        print('INFO: [TEST_024] split_esc')
+        self.assertEqual(split_esc(r''), [])
+        self.assertEqual(split_esc('\\'), [])
+        self.assertEqual(split_esc(r'abcd'), [r'abcd'])
+        self.assertEqual(split_esc(r'abcd efg'), [r'abcd', r'efg'])
+        self.assertEqual(split_esc('abcd      \n\t\f efg'), [r'abcd', r'efg'])
+        self.assertEqual(split_esc(r'abcd\ efg'), [r'abcd efg'])
+        self.assertEqual(split_esc(r'', ':'), [''])
+        self.assertEqual(split_esc(r'abcd', ':'), [r'abcd'])
+        self.assertEqual(split_esc(r'abcd:efg', ':'), [r'abcd', r'efg'])
+        self.assertEqual(split_esc(r'abcd\:efg', ':'), [r'abcd:efg'])
+        self.assertEqual(split_esc(r'abcd:efg:hijk', ':'), [r'abcd', r'efg', r'hijk'])
+        self.assertEqual(split_esc(r'abcd\:efg:hijk', ':'), [r'abcd:efg', r'hijk'])
+        self.assertEqual(split_esc(r'abcd\:efg:hijk\:lmnop:qrs', ':', maxsplit=0), [r'abcd\:efg:hijk\:lmnop:qrs'])
+        self.assertEqual(split_esc(r'abcd\:efg:hijk\:lmnop:qrs', ':', maxsplit=1), [r'abcd:efg', r'hijk\:lmnop:qrs'])
+        self.assertEqual(
+            split_esc(r'abcd\:efg:hijk\:lmnop:qrs', ':', maxsplit=10), [r'abcd:efg', r'hijk:lmnop', r'qrs']
+        )
+        self.assertEqual(split_esc(r'ahellobhelloc', r'hello'), [r'a', r'b', r'c'])
+        self.assertEqual(split_esc(r'a\hellobhelloc', r'hello'), [r'ahellob', r'c'])
+        self.assertEqual(split_esc(r'ahe\llobhelloc', r'hello'), [r'ahellob', r'c'])
+
+    @unittest.skipIf(not LINUX, "NPU available only on Linux")
+    @unittest.skipIf(WINDOWS, "NPU available only on Linux")
+    @unittest.skipIf(WSL, "NPU available only on Linux")
+    def test_025_npu(self):
+        """Check NPU plugin."""
+        print('INFO: [TEST_025] Check NPU stats')
+        if stats.get_plugin('npu').is_disabled():
+            # Disable test if stats is disable in configuration file
+            # Related to #3425
+            return
+        stats_grab = stats.get_plugin('npu').get_raw()
+        self.assertTrue(isinstance(stats_grab, list), msg='NPU stats is not a list')
+        # Test AMD NPU plugin with test data
+        print('INFO: [TEST_025] Check AMD NPU stats with test data')
+        stats_amd_npu = NpuPlugin(
+            config=test_config, args=test_args, amd_npu_root_folder='./tests-data/plugins/npu/amd'
+        )
+        stats_amd_npu.update()
+        stats_grab = stats_amd_npu.get_raw()
+        self.assertTrue(isinstance(stats_grab, list), msg='NPU stats is not a list')
+        self.assertEqual(
+            stats_grab[0],
+            {
+                'npu_id': 'amd_1',
+                'name': 'AMD NPU (Strix Point)',
+                'load': None,
+                'freq': 53,
+                'freq_current': 800000000,
+                'freq_max': 1500000000,
+                'mem': None,
+                'memory_used': None,
+                'memory_total': None,
+                'temperature': None,
+                'power': None,
+            },
+        )
+        # Test Intel NPU plugin with test data
+        print('INFO: [TEST_025] Check Intel NPU stats with test data')
+        stats_intel_npu = NpuPlugin(
+            config=test_config, args=test_args, intel_npu_root_folder='./tests-data/plugins/npu/intel'
+        )
+        stats_intel_npu.update()
+        stats_grab = stats_intel_npu.get_raw()
+        self.assertTrue(isinstance(stats_grab, list), msg='NPU stats is not a list')
+        self.assertEqual(
+            stats_grab[0],
+            {
+                'npu_id': 'intel_1',
+                'name': 'Intel NPU (Meteor Lake)',
+                'load': None,
+                'freq': 57,
+                'freq_current': 800000000,
+                'freq_max': 1400000000,
+                'mem': None,
+                'memory_used': None,
+                'memory_total': None,
+                'temperature': 45.0,
+                'power': 2.5,
+            },
+        )
+        # Test Rockchip NPU plugin with test data
+        print('INFO: [TEST_025] Check Rockchip NPU stats with test data')
+        stats_rockchip_npu = NpuPlugin(
+            config=test_config, args=test_args, rockchip_npu_root_folder='./tests-data/plugins/npu/rockchip'
+        )
+        stats_rockchip_npu.update()
+        stats_grab = stats_rockchip_npu.get_raw()
+        self.assertTrue(isinstance(stats_grab, list), msg='NPU stats is not a list')
+        self.assertEqual(
+            stats_grab[0],
+            {
+                'npu_id': 'rockship_1',
+                'name': 'Orange Pi 5 Plus',
+                'load': 25,
+                'freq': 60,
+                'freq_current': 600000000,
+                'freq_max': 1000000000,
+                'mem': None,
+                'memory_used': None,
+                'memory_total': None,
+                'temperature': None,
+                'power': None,
+            },
+        )
+
+    def test_093_auto_unit(self):
+        """Test auto_unit classe"""
+        print('INFO: [TEST_093] Auto unit')
+        self.assertEqual(auto_unit(1.1234), '1.12')
+        self.assertEqual(auto_unit(1024), '1024')
+        self.assertEqual(auto_unit(1025), '1K')
+        self.assertEqual(auto_unit(613421788), '585M')
+        self.assertEqual(auto_unit(613421788, low_precision=True), '585M')
+        self.assertEqual(auto_unit(5307033647), '4.94G')
+        self.assertEqual(auto_unit(5307033647, low_precision=True), '4.9G')
+        self.assertEqual(auto_unit(44968414685), '41.9G')
+        self.assertEqual(auto_unit(44968414685, low_precision=True), '41.9G')
+        self.assertEqual(auto_unit(838471403472), '781G')
+        self.assertEqual(auto_unit(838471403472, low_precision=True), '781G')
+        self.assertEqual(auto_unit(9683209690677), '8.81T')
+        self.assertEqual(auto_unit(9683209690677, low_precision=True), '8.8T')
+        self.assertEqual(auto_unit(1073741824), '1024M')
+        self.assertEqual(auto_unit(1073741824, low_precision=True), '1024M')
+        self.assertEqual(auto_unit(1181116006), '1.10G')
+        self.assertEqual(auto_unit(1181116006, low_precision=True), '1.1G')
 
     def test_094_thresholds(self):
         """Test thresholds classes"""
@@ -653,10 +886,30 @@ class TestGlances(unittest.TestCase):
     #     print('INFO: [TEST_106] Test diskio plugin methods')
     #     self._common_plugin_tests('diskio')
 
-    def test_107_fs_plugin_method(self):
-        """Test fs plugin methods"""
-        print('INFO: [TEST_107] Test fs plugin methods')
-        self._common_plugin_tests('fs')
+    # Before uncommenting this test, please correct deprecation warning
+    # ===
+    # tests/test_core.py::TestGlances::test_107_fs_plugin_method
+    # tests/test_core.py::TestGlances::test_107_fs_plugin_method
+    # /python3.14/multiprocessing/popen_fork.py:70: DeprecationWarning:
+    # This process (pid=1467579) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    #     self.pid = os.fork()
+    # -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+    # ===
+    # def test_107_fs_plugin_method(self):
+    #     """Test fs plugin methods"""
+    #     print('INFO: [TEST_107] Test fs plugin methods')
+    #     self._common_plugin_tests('fs')
+
+    def test_108_fs_zfs_(self):
+        """Test zfs functions"""
+        print('INFO: [TEST_108] Test zfs functions')
+        self.assertTrue(zfs_enable('./tests-data/plugins/fs/zfs'))
+        stats = zfs_stats(['./tests-data/plugins/fs/zfs/arcstats'])
+        self.assertTrue(isinstance(stats, dict))
+        self.assertTrue('arcstats.c_min' in stats)
+        self.assertEqual(stats['arcstats.c_min'], 2637352832)
+        self.assertTrue('arcstats.size' in stats)
+        self.assertEqual(stats['arcstats.size'], 41321273080)
 
     def test_200_views_hidden(self):
         """Test hide feature"""
@@ -701,6 +954,240 @@ class TestGlances(unittest.TestCase):
         self.assertEqual(plugin_instance.get_raw()[0][field], 0)
         plugin_instance.update_views()
         self.assertFalse(plugin_instance.get_views()[key][field]['hidden'])
+
+    def test_700_mmm_feature_parent_class(self):
+        """Test MMM (Min/Max/Mean) feature in parent class."""
+        print('INFO: [TEST_700] MMM Feature (Min/Max/Mean) in parent class')
+
+        # Create a test plugin with MMM enabled
+        test_fields = {
+            'value': {'description': 'A test value', 'unit': 'percent', 'mmm': True},
+            'other': {'description': 'A value without MMM', 'unit': 'bytes'},
+        }
+
+        class TestMMMPlugin(GlancesPluginModel):
+            def __init__(self):
+                super().__init__(args=None, config=None, fields_description=test_fields)
+
+        plugin = TestMMMPlugin()
+
+        # Test 1: MMM fields initialized
+        self.assertIn('value', plugin._mmm_fields, "value field should be in _mmm_fields")
+        self.assertNotIn('other', plugin._mmm_fields, "other field should NOT be in _mmm_fields")
+
+        # Test 2: Auto-generated descriptions exist
+        self.assertIn('value_min', plugin.fields_description, "value_min description should be auto-generated")
+        self.assertIn('value_max', plugin.fields_description, "value_max description should be auto-generated")
+        self.assertIn('value_mean', plugin.fields_description, "value_mean description should be auto-generated")
+
+        # Test 3: Units are inherited
+        self.assertEqual(plugin.fields_description['value_min']['unit'], 'percent')
+        self.assertEqual(plugin.fields_description['value_max']['unit'], 'percent')
+        self.assertEqual(plugin.fields_description['value_mean']['unit'], 'percent')
+
+        # Test 4: MMM field structure is correct
+        mmm_info = plugin._mmm_fields['value']
+        self.assertIn('values', mmm_info, "values list should exist")
+        self.assertIn('min', mmm_info, "min should exist")
+        self.assertIn('max', mmm_info, "max should exist")
+        self.assertIn('unit', mmm_info, "unit should exist")
+        self.assertIsNone(mmm_info['min'], "min should start as None")
+        self.assertIsNone(mmm_info['max'], "max should start as None")
+
+    def test_701_mmm_update_functionality(self):
+        """Test MMM update functionality."""
+        print('INFO: [TEST_701] MMM update functionality')
+
+        test_fields = {'temperature': {'description': 'Temperature in Celsius', 'unit': 'celsius', 'mmm': True}}
+
+        class TestMMMPlugin(GlancesPluginModel):
+            def __init__(self):
+                super().__init__(args=None, config=None, fields_description=test_fields)
+
+        plugin = TestMMMPlugin()
+
+        # Test 1: First update
+        stats = {'temperature': 50.0}
+        updated_stats = plugin._update_mmm_fields(stats)
+
+        self.assertIn('temperature_min', updated_stats)
+        self.assertIn('temperature_max', updated_stats)
+        self.assertIn('temperature_mean', updated_stats)
+        self.assertEqual(updated_stats['temperature_min'], 50.0)
+        self.assertEqual(updated_stats['temperature_max'], 50.0)
+        self.assertEqual(updated_stats['temperature_mean'], 50.0)
+
+        # Test 2: Second update with higher value
+        stats = {'temperature': 60.0}
+        updated_stats = plugin._update_mmm_fields(stats)
+
+        self.assertEqual(updated_stats['temperature_min'], 50.0, "min should not increase")
+        self.assertEqual(updated_stats['temperature_max'], 60.0, "max should increase")
+        self.assertLess(50.0, updated_stats['temperature_mean'])
+        self.assertLess(updated_stats['temperature_mean'], 60.0)
+
+        # Test 3: Third update with lower value
+        stats = {'temperature': 40.0}
+        updated_stats = plugin._update_mmm_fields(stats)
+
+        self.assertEqual(updated_stats['temperature_min'], 40.0, "min should decrease")
+        self.assertEqual(updated_stats['temperature_max'], 60.0, "max should not decrease")
+
+    def test_702_mmm_mean_calculation(self):
+        """Test MMM mean calculation is correct."""
+        print('INFO: [TEST_702] MMM mean calculation')
+
+        test_fields = {'value': {'description': 'A test value', 'unit': 'percent', 'mmm': True}}
+
+        class TestMMMPlugin(GlancesPluginModel):
+            def __init__(self):
+                super().__init__(args=None, config=None, fields_description=test_fields)
+
+        plugin = TestMMMPlugin()
+
+        # Add known values
+        test_values = [10.0, 20.0, 30.0, 40.0, 50.0]
+        for val in test_values:
+            stats = {'value': val}
+            updated_stats = plugin._update_mmm_fields(stats)
+
+        # Expected mean of all values
+        expected_mean = sum(test_values) / len(test_values)
+
+        self.assertAlmostEqual(updated_stats['value_mean'], expected_mean, places=1)
+        # Also verify min and max
+        self.assertEqual(updated_stats['value_min'], min(test_values))
+        self.assertEqual(updated_stats['value_max'], max(test_values))
+
+    def test_703_mmm_history_limit(self):
+        """Test MMM history respects size limit."""
+        print('INFO: [TEST_703] MMM history respects size limit')
+
+        test_fields = {'value': {'description': 'A test value', 'unit': 'percent', 'mmm': True}}
+
+        class TestMMMPlugin(GlancesPluginModel):
+            def __init__(self):
+                super().__init__(args=None, config=None, fields_description=test_fields)
+
+        plugin = TestMMMPlugin()
+
+        # Check default limit
+        max_history_size = 28800
+
+        # Add values but only a reasonable number (not the full limit to keep test fast)
+        test_iterations = 100
+        for i in range(test_iterations):
+            stats = {'value': float(i % 100)}
+            plugin._update_mmm_fields(stats)
+
+        # History should not exceed limit
+        mmm_info = plugin._mmm_fields['value']
+        self.assertLessEqual(len(mmm_info['values']), max_history_size)
+        # Should have roughly the number we added (100)
+        self.assertEqual(len(mmm_info['values']), test_iterations)
+
+    def test_704_mmm_handles_list_of_dicts(self):
+        """Test MMM update can handle list of stats dictionaries."""
+        print('INFO: [TEST_704] MMM handles list of dicts')
+
+        test_fields = {'utilization': {'description': 'Utilization percent', 'unit': 'percent', 'mmm': True}}
+
+        class TestMMMPlugin(GlancesPluginModel):
+            def __init__(self):
+                super().__init__(args=None, config=None, fields_description=test_fields)
+
+        plugin = TestMMMPlugin()
+
+        # Create a list of stats
+        stats_list = [
+            {'name': 'item1', 'utilization': 50.0},
+            {'name': 'item2', 'utilization': 60.0},
+            {'name': 'item3', 'utilization': 40.0},
+        ]
+
+        # Update with list
+        updated_list = plugin._update_mmm_fields_on_list(stats_list)
+
+        # Check that each item has MMM fields
+        for item in updated_list:
+            self.assertIn('utilization_min', item)
+            self.assertIn('utilization_max', item)
+            self.assertIn('utilization_mean', item)
+
+    def test_705_mmm_ignores_non_numeric_values(self):
+        """Test MMM ignores non-numeric values."""
+        print('INFO: [TEST_705] MMM ignores non-numeric values')
+
+        test_fields = {'status': {'description': 'Status string', 'unit': 'string', 'mmm': True}}
+
+        class TestMMMPlugin(GlancesPluginModel):
+            def __init__(self):
+                super().__init__(args=None, config=None, fields_description=test_fields)
+
+        plugin = TestMMMPlugin()
+
+        # Try to update with non-numeric value
+        stats = {'status': 'active'}
+        updated_stats = plugin._update_mmm_fields(stats)
+
+        # Non-numeric values should not create MMM fields (or they should be None)
+        if 'status_min' in updated_stats:
+            self.assertIsNone(updated_stats.get('status_min'))
+
+    def test_706_mmm_decorator_integration(self):
+        """Test MMM decorator integration with update method."""
+        print('INFO: [TEST_706] MMM decorator integration')
+
+        test_fields = {'cpu': {'description': 'CPU usage', 'unit': 'percent', 'mmm': True}}
+
+        class TestMMMPlugin(GlancesPluginModel):
+            def __init__(self):
+                super().__init__(args=None, config=None, fields_description=test_fields)
+
+            @GlancesPluginModel._manage_mmm
+            def test_update(self):
+                """Test method with MMM decorator."""
+                return {'cpu': 50.5}
+
+        plugin = TestMMMPlugin()
+
+        # Call the decorated method
+        result = plugin.test_update()
+
+        # Should have MMM fields
+        self.assertIn('cpu_min', result)
+        self.assertIn('cpu_max', result)
+        self.assertIn('cpu_mean', result)
+
+    def test_707_mmm_with_mem_plugin(self):
+        """Test MMM integration with actual MemPlugin."""
+        print('INFO: [TEST_707] MMM integration with MemPlugin')
+
+        # Get the mem plugin from stats
+        mem_plugin = stats.get_plugin('mem')
+
+        # Verify percent field has MMM enabled
+        self.assertTrue(mem_plugin.fields_description['percent'].get('mmm', False))
+
+        # Verify MMM fields are in fields_description
+        self.assertIn('percent_min', mem_plugin.fields_description)
+        self.assertIn('percent_max', mem_plugin.fields_description)
+        self.assertIn('percent_mean', mem_plugin.fields_description)
+
+        # Update and verify stats contain MMM fields
+        mem_plugin.update()
+        raw_stats = mem_plugin.get_raw()
+
+        self.assertIn('percent', raw_stats)
+        self.assertIn('percent_min', raw_stats)
+        self.assertIn('percent_max', raw_stats)
+        self.assertIn('percent_mean', raw_stats)
+
+        # Verify relationships
+        self.assertLessEqual(raw_stats['percent_min'], raw_stats['percent'])
+        self.assertGreaterEqual(raw_stats['percent_max'], raw_stats['percent'])
+        self.assertLessEqual(raw_stats['percent_min'], raw_stats['percent_mean'])
+        self.assertGreaterEqual(raw_stats['percent_max'], raw_stats['percent_mean'])
 
     # def test_700_secure(self):
     #     """Test secure functions"""

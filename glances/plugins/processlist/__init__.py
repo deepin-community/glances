@@ -15,7 +15,7 @@ import os
 from glances.globals import WINDOWS, key_exist_value_not_none_not_v, replace_special_chars
 from glances.logger import logger
 from glances.outputs.glances_unicode import unicode_message
-from glances.plugins.core import PluginModel as CorePluginModel
+from glances.plugins.core import CorePlugin
 from glances.plugins.plugin.model import GlancesPluginModel
 from glances.processes import glances_processes, sort_stats
 
@@ -47,7 +47,8 @@ fields_description = {
         'unit': 'number',
     },
     'cpu_percent': {
-        'description': 'Process CPU consumption',
+        'description': 'Process CPU consumption \
+(returned value can be > 100.0 in case of a process running multiple threads on different CPU cores)',
         'unit': 'percent',
     },
     'memory_percent': {
@@ -77,6 +78,10 @@ fields_description = {
     'io_counters': {
         'description': 'Process IO counters (list with read_count, write_count, read_bytes, write_bytes, io_tag keys)',
         'unit': 'byte',
+    },
+    'cpu_num': {
+        'description': 'CPU core number where the process is currently executing (0-based indexing)',
+        'unit': 'number',
     },
 }
 
@@ -111,7 +116,7 @@ def split_cmdline(bare_process_name, cmdline):
     return path, cmd, arguments
 
 
-class PluginModel(GlancesPluginModel):
+class ProcesslistPlugin(GlancesPluginModel):
     """Glances' processes plugin.
 
     stats is a list
@@ -130,6 +135,7 @@ class PluginModel(GlancesPluginModel):
         'nice',
         'status',
         'io_counters',  # ior and iow
+        'cpu_num',  # current CPU core
         'cmdline',
     ]
 
@@ -147,6 +153,7 @@ class PluginModel(GlancesPluginModel):
         'status': '{:>1} ',
         'ior': '{:>4} ',
         'iow': '{:<4} ',
+        'processor': '{:>3} ',
         'command': '{} {}',
     }
 
@@ -165,6 +172,7 @@ class PluginModel(GlancesPluginModel):
         'status': '{:>1} ',
         'ior': '{:>4} ',
         'iow': '{:<4} ',
+        'processor': '{:>3} ',
         'command': '{}',
         'name': '[{}]',
     }
@@ -179,9 +187,9 @@ class PluginModel(GlancesPluginModel):
         # Trying to display proc time
         self.tag_proc_time = True
 
-        # Call CorePluginModel to get the core number (needed when not in IRIX mode / Solaris mode)
+        # Call CorePlugin to get the core number (needed when not in IRIX mode / Solaris mode)
         try:
-            self.nb_log_core = CorePluginModel(args=self.args).update()["log"]
+            self.nb_log_core = CorePlugin(args=self.args).update()["log"]
         except Exception:
             self.nb_log_core = 0
 
@@ -212,11 +220,16 @@ class PluginModel(GlancesPluginModel):
             glances_processes.set_sort_key(config.as_dict()['processlist']['sort_key'], False)
         if 'export' in config.as_dict()['processlist']:
             glances_processes.export_process_filter = config.as_dict()['processlist']['export']
-            if args.export:
+            if args and args.export:
                 logger.info("Export process filter is set to: {}".format(config.as_dict()['processlist']['export']))
+        if 'focus' in config.as_dict()['processlist']:
+            glances_processes.process_focus = config.as_dict()['processlist']['focus']
+            logger.info(
+                "Focus process filter (in glances.conf) is set to: {}".format(config.as_dict()['processlist']['focus'])
+            )
         if 'disable_stats' in config.as_dict()['processlist']:
             logger.info(
-                'Followings processes stats wil not be displayed: {}'.format(
+                'Followings processes stats will not be displayed: {}'.format(
                     config.as_dict()['processlist']['disable_stats']
                 )
             )
@@ -246,6 +259,10 @@ class PluginModel(GlancesPluginModel):
 
         return self.stats
 
+    def get_api(self):
+        """Return the sorted processes list for the API."""
+        return glances_processes.get_list(sorted=True)
+
     def get_export(self):
         """Return the processes list to export.
         Not all the processeses are exported.
@@ -262,20 +279,36 @@ class PluginModel(GlancesPluginModel):
             return 'WARNING'
         if self.get_limit('nice_careful') and value in self.get_limit('nice_careful'):
             return 'CAREFUL'
+        if self.get_limit('nice_ok') and value in self.get_limit('nice_ok'):
+            return 'OK'
 
         return 'DEFAULT'
+
+    def get_status_alert(self, value):
+        """Return the alert relative to the Status configuration list"""
+        value = str(value)
+        if self.get_limit('status_critical') and value in self.get_limit('status_critical'):
+            return 'CRITICAL'
+        if self.get_limit('status_warning') and value in self.get_limit('status_warning'):
+            return 'WARNING'
+        if self.get_limit('status_careful') and value in self.get_limit('status_careful'):
+            return 'CAREFUL'
+        if self.get_limit('status_ok') and value in self.get_limit('status_ok'):
+            return 'OK'
+
+        return 'OK' if value == 'R' else 'DEFAULT'
 
     def _get_process_curses_cpu_percent(self, p, selected, args):
         """Return process CPU curses"""
         if key_exist_value_not_none_not_v('cpu_percent', p, ''):
             cpu_layout = self.layout_stat['cpu'] if p['cpu_percent'] < 100 else self.layout_stat['cpu_no_digit']
-            if args.disable_irix and self.nb_log_core != 0:
+            if args and args.disable_irix and self.nb_log_core != 0:
                 msg = cpu_layout.format(p['cpu_percent'] / float(self.nb_log_core))
             else:
                 msg = cpu_layout.format(p['cpu_percent'])
             alert = self.get_alert(
                 p['cpu_percent'],
-                highlight_zero=False,
+                highlight_zero=True,
                 is_max=(p['cpu_percent'] == self.max_values['cpu_percent']),
                 header="cpu",
             )
@@ -291,7 +324,7 @@ class PluginModel(GlancesPluginModel):
             msg = self.layout_stat['mem'].format(p['memory_percent'])
             alert = self.get_alert(
                 p['memory_percent'],
-                highlight_zero=False,
+                highlight_zero=True,
                 is_max=(p['memory_percent'] == self.max_values['memory_percent']),
                 header="mem",
             )
@@ -322,10 +355,11 @@ class PluginModel(GlancesPluginModel):
         return ret
 
     def _get_process_curses_memory_info(self, p, selected, args):
-        return [
-            self._get_process_curses_vms(p, selected, args),
-            self._get_process_curses_rss(p, selected, args),
-        ]
+        ret = []
+        if not self.get_conf_value('disable_virtual_memory', convert_bool=True, default=False):
+            ret.append(self._get_process_curses_vms(p, selected, args))
+        ret.append(self._get_process_curses_rss(p, selected, args))
+        return ret
 
     def _get_process_curses_pid(self, p, selected, args):
         """Return process PID curses"""
@@ -403,10 +437,11 @@ class PluginModel(GlancesPluginModel):
         if 'status' in p:
             status = p['status']
             msg = self.layout_stat['status'].format(status)
-            if status == 'R':
-                ret = self.curse_add_line(msg, decoration='STATUS')
-            else:
-                ret = self.curse_add_line(msg)
+            ret = self.curse_add_line(msg, decoration=self.get_status_alert(status))
+            # if status == 'R':
+            #     ret = self.curse_add_line(msg, decoration='STATUS')
+            # else:
+            #     ret = self.curse_add_line(msg)
         else:
             msg = self.layout_header['status'].format('?')
             ret = self.curse_add_line(msg)
@@ -437,6 +472,19 @@ class PluginModel(GlancesPluginModel):
             self._get_process_curses_io_read_write(p, selected, args, rorw='iow'),
         ]
 
+    def _get_process_curses_cpu_num(self, p, selected, args):
+        """Return process CPU core number curses"""
+        if 'cpu_num' in p and p['cpu_num'] is not None and p['cpu_num'] >= 0:
+            # Valid CPU core number (0-based)
+            cpu_num = p['cpu_num']
+            msg = self.layout_stat['processor'].format(cpu_num)
+            ret = self.curse_add_line(msg, optional=True)
+        else:
+            # Information unavailable
+            msg = self.layout_header['processor'].format('-')
+            ret = self.curse_add_line(msg, optional=True)
+        return ret
+
     def _get_process_curses_cmdline(self, p, selected, args):
         """Return process cmdline curses"""
         ret = []
@@ -457,7 +505,8 @@ class PluginModel(GlancesPluginModel):
                     msg = self.layout_stat['command'].format(cmd)
                     ret.append(self.curse_add_line(msg, decoration=process_decoration, splittable=True))
                 if arguments:
-                    msg = ' ' + self.layout_stat['command'].format(arguments)
+                    msg = ' ' if args and args.cursor_process_name_position == 0 else unicode_message('THREE_DOTS')
+                    msg += self.layout_stat['command'].format(arguments[args.cursor_process_name_position :])
                     ret.append(self.curse_add_line(msg, splittable=True))
             else:
                 msg = self.layout_stat['name'].format(bare_process_name)
@@ -513,9 +562,10 @@ class PluginModel(GlancesPluginModel):
         if not self.stats or args.disable_process:
             return ret
 
-        # Compute the sort key
-        process_sort_key = glances_processes.sort_key
-        processes_list_sorted = self._sort_stats(process_sort_key)
+        # Sort the processes list
+        processes_list_sorted = sort_stats(
+            self.stats, glances_processes.sort_key, reverse=glances_processes.sort_reverse
+        )
 
         # Display extended stats for selected process
         #############################################
@@ -527,7 +577,7 @@ class PluginModel(GlancesPluginModel):
         ###############################
 
         # Header
-        self._msg_curse_header(ret, process_sort_key, args)
+        self._msg_curse_header(ret, glances_processes.sort_key, args)
 
         # Process list
         # Loop over processes (sorted by the sort key previously compute)
@@ -538,7 +588,7 @@ class PluginModel(GlancesPluginModel):
 
         # A filter is set Display the stats summaries
         if glances_processes.process_filter is not None:
-            if args.reset_minmax_tag:
+            if args and args.reset_minmax_tag:
                 args.reset_minmax_tag = not args.reset_minmax_tag
                 self._mmm_reset()
             self._msg_curse_sum(ret, args=args)
@@ -579,7 +629,7 @@ class PluginModel(GlancesPluginModel):
 
     def add_title_line(self, ret, prog):
         ret.append(self.curse_add_line("Pinned thread ", "TITLE"))
-        ret.append(self.curse_add_line(prog['name'], "UNDERLINE"))
+        ret.append(self.curse_add_line(prog.get('name', ''), "UNDERLINE"))
         ret.append(self.curse_add_line(" ('e' to unpin)"))
 
         return ret
@@ -587,7 +637,9 @@ class PluginModel(GlancesPluginModel):
     def add_cpu_line(self, ret, prog):
         ret.append(self.curse_new_line())
         ret.append(self.curse_add_line(' CPU Min/Max/Mean: '))
-        msg = '{: >7.1f}{: >7.1f}{: >7.1f}%'.format(prog['cpu_min'], prog['cpu_max'], prog['cpu_mean'])
+        msg = '{: >7.1f}{: >7.1f}{: >7.1f}%'.format(
+            prog.get('cpu_min', 0), prog.get('cpu_max', 0), prog.get('cpu_mean', 0)
+        )
         ret.append(self.curse_add_line(msg, decoration='INFO'))
 
         return ret
@@ -595,7 +647,7 @@ class PluginModel(GlancesPluginModel):
     def maybe_add_cpu_affinity_line(self, ret, prog):
         if 'cpu_affinity' in prog and prog['cpu_affinity'] is not None:
             ret.append(self.curse_add_line(' Affinity: '))
-            ret.append(self.curse_add_line(str(len(prog['cpu_affinity'])), decoration='INFO'))
+            ret.append(self.curse_add_line(str(len(prog.get('cpu_affinity', []))), decoration='INFO'))
             ret.append(self.curse_add_line(' cores', decoration='INFO'))
 
         return ret
@@ -638,7 +690,7 @@ class PluginModel(GlancesPluginModel):
         if 'memory_swap' in prog and prog['memory_swap'] is not None:
             ret.append(
                 self.curse_add_line(
-                    self.auto_unit(prog['memory_swap'], low_precision=False), decoration='INFO', splittable=True
+                    self.auto_unit(prog.get('memory_swap', 0), low_precision=False), decoration='INFO', splittable=True
                 )
             )
             ret.append(self.curse_add_line(' swap ', splittable=True))
@@ -661,7 +713,9 @@ class PluginModel(GlancesPluginModel):
     def add_memory_line(self, ret, prog):
         ret.append(self.curse_new_line())
         ret.append(self.curse_add_line(' MEM Min/Max/Mean: '))
-        msg = '{: >7.1f}{: >7.1f}{: >7.1f}%'.format(prog['memory_min'], prog['memory_max'], prog['memory_mean'])
+        msg = '{: >7.1f}{: >7.1f}{: >7.1f}%'.format(
+            prog.get('memory_min', 0), prog.get('memory_max', 0), prog.get('memory_mean', 0)
+        )
         ret.append(self.curse_add_line(msg, decoration='INFO'))
         if 'memory_info' in prog and prog['memory_info'] is not None:
             ret.append(self.curse_add_line(' Memory info: '))
@@ -675,7 +729,7 @@ class PluginModel(GlancesPluginModel):
         ret.append(self.curse_add_line(' Open: '))
         for stat_prefix in ['num_threads', 'num_fds', 'num_handles', 'tcp', 'udp']:
             if stat_prefix in prog and prog[stat_prefix] is not None:
-                ret.append(self.curse_add_line(str(prog[stat_prefix]), decoration='INFO'))
+                ret.append(self.curse_add_line(str(prog.get(stat_prefix, 0)), decoration='INFO'))
                 ret.append(self.curse_add_line(' {} '.format(stat_prefix.replace('num_', ''))))
         return ret
 
@@ -699,49 +753,77 @@ class PluginModel(GlancesPluginModel):
 
         functools.reduce(lambda ret, step: step(ret, prog), steps, ret)
 
-    def _msg_curse_header(self, ret, process_sort_key, args=None):
+    def _msg_curse_header_cpu(self, ret, process_sort_key, display_stats, sort_style='SORT', args=None):
         """Build the header and add it to the ret dict."""
-        sort_style = 'SORT'
-
-        display_stats = [i for i in self.enable_stats if i not in glances_processes.disable_stats]
-
         if 'cpu_percent' in display_stats:
-            if args.disable_irix and 0 < self.nb_log_core < 10:
+            if args and args.disable_irix and 0 < self.nb_log_core < 10:
                 msg = self.layout_header['cpu'].format('CPU%/' + str(self.nb_log_core))
-            elif args.disable_irix and self.nb_log_core != 0:
-                msg = self.layout_header['cpu'].format('CPU%/C')
+            elif args and args.disable_irix and self.nb_log_core != 0:
+                msg = self.layout_header['cpu'].format('CPUi')
             else:
                 msg = self.layout_header['cpu'].format('CPU%')
             ret.append(self.curse_add_line(msg, sort_style if process_sort_key == 'cpu_percent' else 'DEFAULT'))
 
-        if 'memory_percent' in display_stats:
-            msg = self.layout_header['mem'].format('MEM%')
-            ret.append(self.curse_add_line(msg, sort_style if process_sort_key == 'memory_percent' else 'DEFAULT'))
+    def msg_curse_header_common(
+        self,
+        ret,
+        process_sort_key,
+        field_stat,
+        display_stats,
+        layout_field,
+        layout_value,
+        layout_width=None,
+        sort_style='SORT',
+    ):
+        if field_stat in display_stats:
+            msg = self.layout_header[layout_field].format(layout_value, width=layout_width)
+            ret.append(self.curse_add_line(msg, sort_style if process_sort_key == field_stat else 'DEFAULT'))
+
+    def _msg_curse_header(self, ret, process_sort_key, args=None):
+        """Build the header and add it to the ret dict."""
+        sort_style = 'SORT'
+
+        if glances_processes.process_focus and glances_processes.process_focus != []:
+            msg = 'Focus on following processes: ' + ', '.join([i.filter for i in glances_processes.process_focus])
+            ret.append(self.curse_add_line(msg))
+            ret.append(self.curse_new_line())
+
+        display_stats = [i for i in self.enable_stats if i not in glances_processes.disable_stats]
+        self._msg_curse_header_cpu(ret, process_sort_key, display_stats, args=args, sort_style=sort_style)
+        self.msg_curse_header_common(
+            ret, process_sort_key, 'memory_percent', display_stats, 'mem', 'MEM%', sort_style=sort_style
+        )
         if 'memory_info' in display_stats:
-            msg = self.layout_header['virt'].format('VIRT')
-            ret.append(self.curse_add_line(msg, optional=True))
+            if not self.get_conf_value('disable_virtual_memory', convert_bool=True, default=False):
+                msg = self.layout_header['virt'].format('VIRT')
+                ret.append(self.curse_add_line(msg, optional=True))
             msg = self.layout_header['res'].format('RES')
             ret.append(self.curse_add_line(msg, optional=True))
-        if 'pid' in display_stats:
-            msg = self.layout_header['pid'].format('PID', width=self._max_pid_size())
-            ret.append(self.curse_add_line(msg))
-        if 'username' in display_stats:
-            msg = self.layout_header['user'].format('USER')
-            ret.append(self.curse_add_line(msg, sort_style if process_sort_key == 'username' else 'DEFAULT'))
+        self.msg_curse_header_common(
+            ret,
+            process_sort_key,
+            'pid',
+            display_stats,
+            'pid',
+            'PID',
+            layout_width=self._max_pid_size(),
+            sort_style=sort_style,
+        )
+        self.msg_curse_header_common(
+            ret, process_sort_key, 'username', display_stats, 'user', 'USER', sort_style=sort_style
+        )
         if 'cpu_times' in display_stats:
             msg = self.layout_header['time'].format('TIME+')
             ret.append(
                 self.curse_add_line(msg, sort_style if process_sort_key == 'cpu_times' else 'DEFAULT', optional=True)
             )
-        if 'num_threads' in display_stats:
-            msg = self.layout_header['thread'].format('THR')
-            ret.append(self.curse_add_line(msg))
-        if 'nice' in display_stats:
-            msg = self.layout_header['nice'].format('NI')
-            ret.append(self.curse_add_line(msg))
-        if 'status' in display_stats:
-            msg = self.layout_header['status'].format('S')
-            ret.append(self.curse_add_line(msg))
+        self.msg_curse_header_common(
+            ret, process_sort_key, 'num_threads', display_stats, 'thread', 'THR', sort_style=sort_style
+        )
+        self.msg_curse_header_common(ret, process_sort_key, 'nice', display_stats, 'nice', 'NI', sort_style=sort_style)
+        self.msg_curse_header_common(
+            ret, process_sort_key, 'status', display_stats, 'status', 'S', sort_style=sort_style
+        )
         if 'io_counters' in display_stats:
             msg = self.layout_header['ior'].format('R/s')
             ret.append(
@@ -755,7 +837,10 @@ class PluginModel(GlancesPluginModel):
                     msg, sort_style if process_sort_key == 'io_counters' else 'DEFAULT', optional=True, additional=True
                 )
             )
-        if args.is_standalone and not args.disable_cursor:
+        if 'cpu_num' in display_stats:
+            msg = self.layout_header['processor'].format('CPU')
+            ret.append(self.curse_add_line(msg, optional=True))
+        if args and args.is_standalone and not args.disable_cursor:
             shortkey = "('e' to pin | 'k' to kill)"
         else:
             shortkey = ""
@@ -886,7 +971,7 @@ class PluginModel(GlancesPluginModel):
                 continue
             if sub_key is None:
                 ret += p[key]
-            else:
+            elif sub_key in p[key]:
                 ret += p[key][sub_key]
 
         # Manage Min/Max/Mean
@@ -920,10 +1005,6 @@ class PluginModel(GlancesPluginModel):
             ret += str(sub_key)
         return ret
 
-    def _sort_stats(self, sorted_by=None):
-        """Return the stats (dict) sorted by (sorted_by)."""
-        return sort_stats(self.stats, sorted_by, reverse=glances_processes.sort_reverse)
-
     def _max_pid_size(self):
         """Return the maximum PID size in number of char."""
         if self.pid_max is not None:
@@ -931,3 +1012,6 @@ class PluginModel(GlancesPluginModel):
 
         # By default return 5 (corresponding to 99999 PID number)
         return 5
+
+
+# End of file

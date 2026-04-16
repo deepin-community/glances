@@ -19,7 +19,7 @@ Stats description:
 - **used**: memory used, calculated differently depending on the platform and
   designed for informational purposes only.
   It's compute as following:
-   used memory = total - free (with free = available + buffers + cached)
+  used memory = total - free (with free = available + buffers + cached)
 - **free**: memory not being used at all (zeroed) that is readily available;
   note that this doesn’t reflect the actual memory available (use ‘available’
   instead).
@@ -27,7 +27,7 @@ Stats description:
   is in RAM.
 - **inactive**: (UNIX): memory that is marked as not used.
 - **buffers**: (Linux, BSD): cache for things like file system metadata.
-- **cached**: (Linux, BSD): cache for various things.
+- **cached**: (Linux, BSD): cache for various things (including ZFS cache).
 
 Additional stats available in through the API:
 
@@ -40,6 +40,16 @@ Additional stats available in through the API:
   never moved to disk.
 - **shared**: (BSD): memory that may be simultaneously accessed by multiple
   processes.
+- **percent_min**: the minimum memory usage percentage observed since
+  Glances startup.
+- **percent_max**: the maximum memory usage percentage observed since
+  Glances startup.
+- **percent_mean**: the mean memory usage percentage observed since
+  Glances startup.
+
+It is possible to display the available memory instead of the used memory
+by setting the ``available`` option to ``True`` in the configuration file
+under the ``[mem]`` section.
 
 A character is also displayed just after the MEM header and shows the
 trend value:

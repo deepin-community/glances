@@ -17,6 +17,10 @@ from glances import __version__
 from glances.globals import json_loads
 from glances.logger import logger
 from glances.outputs.glances_curses import GlancesCursesClient
+from glances.outputs.glances_stdout import GlancesStdout
+from glances.outputs.glances_stdout_csv import GlancesStdoutCsv
+from glances.outputs.glances_stdout_fetch import GlancesStdoutFetch
+from glances.outputs.glances_stdout_json import GlancesStdoutJson
 from glances.stats_client import GlancesStatsClient
 from glances.timer import Counter
 
@@ -64,7 +68,8 @@ class GlancesClient:
         try:
             self.client = xmlrpc.xmlrpc_client.ServerProxy(self.uri, transport=transport)
         except Exception as e:
-            self.log_and_exit(f"Client couldn't create socket {self.uri}: {e}")
+            # Do not log self.uri here because it may contain credentials
+            self.log_and_exit(f"Client couldn't create socket to http://{args.client}:{args.port}: {e}")
 
     @property
     def quiet(self):
@@ -73,10 +78,12 @@ class GlancesClient:
     def log_and_exit(self, msg=''):
         """Log and exit."""
         if not self.return_to_browser:
-            logger.critical(msg)
+            # Do not include msg here because it may contain sensitive information
+            logger.critical("Error when connecting to Glances server")
             sys.exit(2)
         else:
-            logger.error(msg)
+            # Avoid logging potentially sensitive details contained in msg
+            logger.error("Error when connecting to Glances server")
 
     @property
     def client_mode(self):
@@ -172,6 +179,21 @@ class GlancesClient:
         if self.quiet:
             # In quiet mode, nothing is displayed
             logger.info("Quiet mode is ON: Nothing will be displayed")
+        elif self.args.stdout:
+            logger.info(f"Stdout mode is ON, following stats will be displayed: {self.args.stdout}")
+            # Init screen
+            self.screen = GlancesStdout(config=self.config, args=self.args)
+        elif self.args.stdout_json:
+            logger.info(f"Stdout JSON mode is ON, following stats will be displayed: {self.args.stdout_json}")
+            # Init screen
+            self.screen = GlancesStdoutJson(config=self.config, args=self.args)
+        elif self.args.stdout_csv:
+            logger.info(f"Stdout CSV mode is ON, following stats will be displayed: {self.args.stdout_csv}")
+            # Init screen
+            self.screen = GlancesStdoutCsv(config=self.config, args=self.args)
+        elif self.args.stdout_fetch:
+            logger.info("Fetch mode is ON")
+            self.screen = GlancesStdoutFetch(config=self.config, args=self.args)
         else:
             self.screen = GlancesCursesClient(config=self.config, args=self.args)
 
@@ -237,6 +259,7 @@ class GlancesClient:
             return self.client_mode
 
         exit_key = False
+
         try:
             while True and not exit_key:
                 # Update the stats
@@ -264,8 +287,8 @@ class GlancesClient:
                 else:
                     # In quiet mode, we only wait adapated_refresh seconds
                     time.sleep(adapted_refresh)
-        except Exception as e:
-            logger.critical(e)
+        except Exception:
+            logger.critical("Critical error in client serve_forever loop")
             self.end()
 
         return self.client_mode

@@ -1,3 +1,19 @@
+glances (4.3.1+dfsg-1deepin1) unstable; urgency=high
+
+  * Fix CVE-2026-30928: Unauthenticated Configuration Secrets Exposure
+  * Fix CVE-2026-32609: Incomplete Secrets Redaction in /api/4/args
+    endpoint
+  * Fix CVE-2026-32596: Unauthenticated Web Server Exposure
+  * Fix CVE-2026-32608: Mustache Template Command Injection
+  * Fix CVE-2026-32610: CORS Wildcard with Credentials
+  * Fix CVE-2026-32632: DNS Rebinding Protection
+  * Fix CVE-2026-32633: Serverslist API Exposes Downstream Credentials
+  * Fix CVE-2026-32634: Central Browser Credential Leak
+  * Fix CVE-2026-33533: XML-RPC CORS Information Disclosure
+  * Fix CVE-2026-33641: Config Backtick Command Execution
+
+ -- lichenggang <lichenggang@uniontech.com>  Wed, 22 Apr 2026 15:37:53 +0800
+
 glances (4.3.1+dfsg-1) unstable; urgency=medium
 
   * New upstream release
